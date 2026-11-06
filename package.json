@@ -1,0 +1,24 @@
+{
+  "name": "topstickly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "vite build && electron ."
+  },
+  "dependencies": {
+    "koffi": "^3.3.7",
+    "lucide-react": "^1.70.0",
+    "mysql2": "^3.24.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.2.1",
+    "electron": "^45.2.3",
+    "vite": "^8.3.6"
+  }
+}
