@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, Tray } from 'electron'
 import path from 'node:path'
 import { dockTop, undock, setRect, primaryScreen } from './appbar.js'
-import { loadDbConfig, saveDbConfig, testDb, getPatient, getNsaids, getRecentLab } from './db.js'
+import { loadDbConfig, saveDbConfig, testDb, getPatient } from './db.js'
+import { GROUPS, checkRules, rulesOff, setRuleOn } from './rules.js'
 import { readHn, watchClicks } from './hosxp.js'
 import updater from 'electron-updater' // CommonJS package: named ESM imports aren't available
 const { autoUpdater } = updater
@@ -119,46 +120,77 @@ app.whenReady().then(() => {
 
   // ponytail: 1s polling of HOSxP's HN box; switch to SetWinEventHook(EVENT_OBJECT_VALUECHANGE) if lag matters
   let patient = { hn: '' }
+  // Rule hits for the current patient: group → [{ id, name, rows }]. Rules: electron/rules.js.
+  // The warning itself is a modal: RDU pops up when a rule is hit, RLU when the flagged lab is ticked.
+  const noAlerts = () => ({ rlu: [], rdu: [], claim: [] })
+  let alerts = noAlerts()
+  let shown = new Set() // RDU rule ids already popped up for this patient
   const sendPatient = () => win.webContents.send('patient', patient)
-  const hnTimer = setInterval(async () => {
-    const hn = readHn()
-    if (hn === null || hn === patient.hn) return
-    patient = { hn }
-    sendPatient() // show the HN right away, name + last visit follow
+  // badge = rules switched on / all rules, per group (a setting, not a warning)
+  const sendAlerts = () => {
+    const off = new Set(rulesOff())
+    const count = Object.fromEntries(Object.entries(GROUPS).map(([g, { rules }]) => [g, { on: rules.filter((r) => !off.has(r.id)).length, total: rules.length }]))
+    win.webContents.send('alerts', count)
+  }
+  // Re-read the latest visit and run the rules; pop up RDU rules hit for the first time.
+  async function recheck() {
+    const hn = patient.hn
     if (!hn) return
     const info = await getPatient(hn)
     if (patient.hn !== hn) return // HN changed while we were querying
     patient = { hn, ...info }
     sendPatient()
+    const hits = await checkRules({ hn, vn: info.vn })
+    if (patient.hn !== hn) return
+    alerts = hits
+    sendAlerts()
+    const fresh = alerts.rdu.filter((h) => !shown.has(h.id))
+    fresh.forEach((h) => shown.add(h.id))
+    if (fresh.length) openWarning(fresh.map((h) => ({ group: 'rdu', rule: h.name, rows: h.rows })))
+  }
+  const hnTimer = setInterval(() => {
+    const hn = readHn()
+    if (hn === null || hn === patient.hn) return
+    patient = { hn }
+    alerts = noAlerts()
+    shown = new Set()
+    sendPatient() // show the HN right away, name + last visit follow
+    sendAlerts()
+    recheck()
   }, HN_POLL_MS)
+  // Drugs get ordered while the patient is open: re-check shortly after the user stops clicking in HOSxP.
+  // ponytail: up to ~23 small queries per check; move to a timer or SetWinEventHook if the DB feels it
+  let recheckTimer
+  const recheckSoon = () => {
+    clearTimeout(recheckTimer)
+    recheckTimer = setTimeout(recheck, 1500)
+  }
   let updateVersion = '' // downloaded and ready to install
   win.webContents.on('did-finish-load', () => {
     sendPatient()
+    sendAlerts()
     win.webContents.send('update', updateVersion)
   })
   startAutoUpdate((v) => win.webContents.send('update', (updateVersion = v)))
   ipcMain.on('install-update', installUpdate)
-  const unhookClicks = watchClicks(async (click) => {
+  const unhookClicks = watchClicks((click) => {
     win.webContents.send('click', click)
-    // Ticking a lab checkbox, or picking a lab in a combobox: warn if this patient already had that lab
-    // within a year. checked === null (state unreadable) still warns: a needless warning beats a missed one.
+    recheckSoon()
+    // Ticking a lab checkbox, or picking a lab in a combobox: warn if an RLU rule already flagged that lab
+    // for this patient. checked === null (state unreadable) still warns: a needless warning beats a missed one.
     const picksLab = (click.action === 'check' && click.checked !== false) || click.action === 'select'
-    if (!picksLab || !patient.hn) return
-    const hn = patient.hn
-    const lab = await getRecentLab(hn, click.caption).catch(() => null)
-    if (lab && patient.hn === hn)
-      openLabWarning({
-        hn,
-        patient: patient.name ?? '',
-        lab: lab.name,
-        order_date: lab.order_date,
-        order_time: lab.order_time ?? '',
-        days_ago: lab.days_ago,
-        result: lab.result ?? '',
-      })
+    if (!picksLab || !click.caption) return
+    const lab = click.caption.replace(/\s*\?\s*$/, '').trim() // HOSxP captions = lab_items_name + optional " ?"
+    // rows are newest first: keep the latest order per rule
+    const found = alerts.rlu.flatMap((h) => {
+      const rows = h.rows.filter((r) => r.lab === lab).slice(0, 1)
+      return rows.length ? [{ group: 'rlu', rule: h.name, rows }] : []
+    })
+    if (found.length) openWarning(found)
   })
   win.on('close', () => {
     clearInterval(hnTimer)
+    clearTimeout(recheckTimer)
     unhookClicks()
   })
   load(win)
@@ -177,28 +209,48 @@ app.whenReady().then(() => {
   let settings
   ipcMain.on('open-settings', () => {
     if (settings) return settings.focus()
-    // height: the page reports its real height via 'fit-settings'
+    // height: the page reports its real height via 'fit'
     settings = popup({ width: SETTINGS_WIDTH, height: 400, title: 'ตั้งค่าการเชื่อมต่อ HOSxP', resizable: false })
     settings.on('closed', () => (settings = null))
     load(settings, 'settings')
   })
-  ipcMain.on('fit-settings', (_e, h) => settings?.setContentSize(SETTINGS_WIDTH, Math.ceil(h)))
-
-  let drugs
-  ipcMain.on('open-drugs', (_e, info) => {
-    drugs?.destroy() // one at a time, always for the visit just clicked
-    drugs = popup({ width: 720, height: 440, title: 'ยา NSAID' })
-    drugs.on('closed', () => (drugs = null))
-    load(drugs, `drugs?${new URLSearchParams(info)}`)
+  // popups report their content height; keep the width
+  ipcMain.on('fit', (e, h) => {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    w?.setContentSize(w.getContentSize()[0], Math.ceil(h))
   })
-  ipcMain.handle('get-nsaids', (_e, vn) => getNsaids(vn))
 
-  let labWarning
-  function openLabWarning(info) {
-    labWarning?.destroy() // one at a time, for the latest click
-    labWarning = popup({ width: 460, height: 200, frame: false, resizable: false }) // page draws its own close button
-    labWarning.on('closed', () => (labWarning = null))
-    load(labWarning, `labwarn?${new URLSearchParams(info)}`)
+  let rules
+  ipcMain.on('open-rules', (_e, group) => {
+    rules?.destroy() // one at a time, for the badge just clicked
+    rules = popup({ width: 960, height: 640 })
+    rules.on('closed', () => (rules = null))
+    load(rules, `rules?group=${group}`)
+  })
+  ipcMain.handle('get-alerts', (_e, group) => {
+    const { hn, name, vstdate, vsttime } = patient
+    return { patient: { hn, name, vstdate, vsttime }, group: GROUPS[group], hits: alerts[group], off: rulesOff() }
+  })
+  // เตือน/ไม่เตือน switch in the rules modal: re-check the current patient so the badge follows at once
+  ipcMain.handle('set-rule', async (_e, group, id, on) => {
+    setRuleOn(id, on)
+    const hn = patient.hn
+    if (hn) {
+      const hits = await checkRules({ hn, vn: patient.vn ?? '' })
+      if (patient.hn === hn) alerts = hits
+    } else alerts = noAlerts()
+    sendAlerts()
+    return { hits: alerts[group], off: rulesOff() }
+  })
+
+  // The warning modal: items = [{ group, rule, rows }]
+  let warning
+  function openWarning(items) {
+    warning?.destroy() // one at a time, the latest wins
+    warning = popup({ width: 520, height: 200, frame: false, resizable: false }) // page draws its own close button
+    warning.on('closed', () => (warning = null))
+    const q = new URLSearchParams({ hn: patient.hn, patient: patient.name ?? '', items: JSON.stringify(items) })
+    load(warning, `warn?${q}`)
   }
   ipcMain.handle('get-db-config', () => loadDbConfig())
   ipcMain.handle('save-db-config', (_e, cfg) => saveDbConfig(cfg))

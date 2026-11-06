@@ -19,10 +19,16 @@ contextBridge.exposeInMainWorld('bar', {
     ipcRenderer.on('update', listener)
     return () => ipcRenderer.off('update', listener)
   },
+  onAlerts: (cb) => {
+    const listener = (_e, alerts) => cb(alerts)
+    ipcRenderer.on('alerts', listener)
+    return () => ipcRenderer.off('alerts', listener)
+  },
   installUpdate: () => ipcRenderer.send('install-update'),
-  openDrugs: (info) => ipcRenderer.send('open-drugs', info),
-  getNsaids: (vn) => ipcRenderer.invoke('get-nsaids', vn),
-  fitSettings: (height) => ipcRenderer.send('fit-settings', height),
+  openRules: (group) => ipcRenderer.send('open-rules', group),
+  getAlerts: (group) => ipcRenderer.invoke('get-alerts', group),
+  setRule: (group, id, on) => ipcRenderer.invoke('set-rule', group, id, on),
+  fit: (height) => ipcRenderer.send('fit', height),
   getDbConfig: () => ipcRenderer.invoke('get-db-config'),
   saveDbConfig: (cfg) => ipcRenderer.invoke('save-db-config', cfg),
   testDb: (cfg) => ipcRenderer.invoke('test-db', cfg),

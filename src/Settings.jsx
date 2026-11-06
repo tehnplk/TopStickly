@@ -24,7 +24,7 @@ export default function Settings() {
   // grow/shrink the window to fit everything (e.g. a long error message)
   useEffect(() => {
     if (!page.current) return
-    const ro = new ResizeObserver(() => window.bar.fitSettings(page.current.offsetHeight))
+    const ro = new ResizeObserver(() => window.bar.fit(page.current.offsetHeight))
     ro.observe(page.current)
     return () => ro.disconnect()
   }, [cfg !== null])

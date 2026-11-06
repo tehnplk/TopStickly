@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronUp, Download, Settings } from 'lucide-react'
-import PillIcon from './PillIcon.jsx'
+import { ChevronUp, Download, FlaskConical, Pill, Receipt, Settings } from 'lucide-react'
 import MonkIcon from './MonkIcon.jsx'
 import { thaiDate } from './format.js'
 
@@ -9,12 +8,18 @@ const btn = { background: 'none', border: 0, color: 'inherit', font: 'inherit', 
 const badge = { padding: '2px 8px', borderRadius: 10, background: 'rgba(255,255,255,0.12)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }
 const actionStyle = { padding: '0 5px', borderRadius: 3, background: 'rgba(255,255,255,0.15)', fontSize: 11 }
 const ncdBadge = { ...badge, background: '#c62828', color: '#fff', fontWeight: 700, letterSpacing: 0.3, cursor: 'help' }
+// alert group badges: icon instead of the group name, then rules switched on / all rules
+const groupBadge = { ...badge, display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }
+const groupOff = { opacity: 0.45 }
+const none = { on: 0, total: 0 }
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false)
   const [patient, setPatient] = useState({ hn: '' })
-  const { hn, name, ncd, vn, vstdate, vsttime } = patient
+  const { hn, name, ncd, vstdate, vsttime } = patient
   useEffect(() => window.bar.onPatient(setPatient), [])
+  const [count, setCount] = useState({ rlu: none, rdu: none, claim: none }) // group → { on, total }
+  useEffect(() => window.bar.onAlerts(setCount), [])
   const [click, setClick] = useState(null) // last HOSxP action: { action, form, cls, caption, checked }
   useEffect(() => window.bar.onClick(setClick), [])
   const [update, setUpdate] = useState('') // version downloaded and ready to install
@@ -60,11 +65,19 @@ export default function App() {
               {thaiDate(vstdate)} {vsttime.slice(0, 5)}
             </span>
           )}
-          {vn && (
-            <button className="bar-btn" style={{ width: 30 }} onClick={() => window.bar.openDrugs(patient)} title="ดูยา NSAID ใน visit นี้">
-              <PillIcon size={22} />
-            </button>
-          )}
+          {[
+            ['rlu', FlaskConical],
+            ['rdu', Pill],
+            ['claim', Receipt],
+          ].map(([key, Icon]) => {
+            const { on, total } = count[key]
+            const tip = `${key.toUpperCase()}: เปิดเตือน ${on} จาก ${total} กฎ (คลิกเพื่อตั้งค่า)`
+            return (
+              <button key={key} style={{ ...btn, ...groupBadge, ...(on ? undefined : groupOff) }} onClick={() => window.bar.openRules(key)} title={tip}>
+                <Icon size={14} /> {on}/{total}
+              </button>
+            )
+          })}
         </span>
       )}
       {/* Windows order: app actions first, window control (minimize) at the far right */}

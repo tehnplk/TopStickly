@@ -67,47 +67,11 @@ export async function getPatient(hn) {
   }
 }
 
-// Latest order of a lab item for a patient within the last year, or null.
-// labName is the HOSxP checkbox caption, which equals lab_items.lab_items_name plus an optional " ?".
-export async function getRecentLab(hn, labName) {
+// A rule's SQL with :hn / :vn of the current patient.
+export async function runSql(sql, params) {
   const p = await getPool()
-  if (!p) return null
-  const [[row]] = await p.query(
-    `SELECT i.lab_items_name AS name, h.order_date, h.order_time, o.lab_order_result AS result,
-            DATEDIFF(CURDATE(), h.order_date) AS days_ago
-       FROM lab_head h
-       JOIN lab_order o ON o.lab_order_number = h.lab_order_number
-       JOIN lab_items i ON i.lab_items_code = o.lab_items_code
-      WHERE h.hn = ? AND i.lab_items_name = ? AND h.order_date >= CURDATE() - INTERVAL 1 YEAR
-      ORDER BY h.order_date DESC, h.order_time DESC LIMIT 1`,
-    [hn, labName.replace(/\s*\?\s*$/, '').trim()]
-  )
-  return row ?? null
-}
-
-// HOSxP has no NSAID flag and therapeuticgroup is filled in inconsistently (often blank for
-// celecoxib/meloxicam/etoricoxib), so match on generic names. Low-dose aspirin is left out on purpose.
-const NSAIDS = [
-  'IBUPROFEN', 'DEXIBUPROFEN', 'DICLOFENAC', 'ACECLOFENAC', 'NAPROXEN', 'KETOPROFEN', 'DEXKETOPROFEN',
-  'FLURBIPROFEN', 'KETOROLAC', 'INDOMETHACIN', 'SULINDAC', 'ETODOLAC', 'NABUMETONE', 'MEFENAMIC',
-  'TOLFENAMIC', 'FLUFENAMIC', 'FLOCTAFENINE', 'PIROXICAM', 'MELOXICAM', 'TENOXICAM', 'LORNOXICAM', 'NIMESULIDE',
-  'CELECOXIB', 'ETORICOXIB', 'PARECOXIB', 'PHENYLBUTAZONE',
-]
-
-// NSAIDs ordered in a visit.
-export async function getNsaids(vn) {
-  const p = await getPool()
-  if (!p) throw new Error('ยังไม่ได้ตั้งค่าการเชื่อมต่อฐานข้อมูล')
-  const [rows] = await p.query(
-    `SELECT d.name, d.strength, d.units, o.qty,
-            TRIM(CONCAT_WS(' ', du.name1, du.name2, du.name3)) AS howto
-       FROM opitemrece o
-       JOIN drugitems d ON d.icode = o.icode
-       LEFT JOIN drugusage du ON du.drugusage = o.drugusage
-      WHERE o.vn = ? AND CONCAT_WS(' ', d.name, d.generic_name) REGEXP ?
-      ORDER BY o.item_no, d.name`,
-    [vn, NSAIDS.join('|')]
-  )
+  if (!p) return []
+  const [rows] = await p.query({ sql, namedPlaceholders: true }, params)
   return rows
 }
 
