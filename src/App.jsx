@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronUp, Settings } from 'lucide-react'
+import { ChevronUp, Download, Settings } from 'lucide-react'
 import PillIcon from './PillIcon.jsx'
 import MonkIcon from './MonkIcon.jsx'
 import { thaiDate } from './format.js'
@@ -8,7 +8,7 @@ const bar = { height: '100vh', display: 'flex', alignItems: 'center', background
 const btn = { background: 'none', border: 0, color: 'inherit', font: 'inherit', cursor: 'pointer', padding: 0 }
 const badge = { padding: '2px 8px', borderRadius: 10, background: 'rgba(255,255,255,0.12)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }
 const actionStyle = { padding: '0 5px', borderRadius: 3, background: 'rgba(255,255,255,0.15)', fontSize: 11 }
-const ncdBadge ={ ...badge, background: '#c62828', color: '#fff', fontWeight: 700, letterSpacing: 0.3, cursor: 'help' }
+const ncdBadge = { ...badge, background: '#c62828', color: '#fff', fontWeight: 700, letterSpacing: 0.3, cursor: 'help' }
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false)
@@ -17,6 +17,8 @@ export default function App() {
   useEffect(() => window.bar.onPatient(setPatient), [])
   const [click, setClick] = useState(null) // last HOSxP action: { action, form, cls, caption, checked }
   useEffect(() => window.bar.onClick(setClick), [])
+  const [update, setUpdate] = useState('') // version downloaded and ready to install
+  useEffect(() => window.bar.onUpdate(setUpdate), [])
 
   const toggle = () => {
     window.bar.setCollapsed(!collapsed)
@@ -81,6 +83,11 @@ export default function App() {
       <button className="bar-btn" onClick={toggle} title="ย่อ">
         <ChevronUp size={18} />
       </button>
+      {update && (
+        <button className="bar-btn" style={{ color: '#4caf50' }} onClick={() => window.bar.installUpdate()} title={`อัปเดตเป็น v${update} แล้วเปิดใหม่`}>
+          <Download size={16} />
+        </button>
+      )}
     </div>
   )
 }

@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('bar', {
     ipcRenderer.on('click', listener)
     return () => ipcRenderer.off('click', listener)
   },
+  onUpdate: (cb) => {
+    const listener = (_e, version) => cb(version)
+    ipcRenderer.on('update', listener)
+    return () => ipcRenderer.off('update', listener)
+  },
+  installUpdate: () => ipcRenderer.send('install-update'),
   openDrugs: (info) => ipcRenderer.send('open-drugs', info),
   getNsaids: (vn) => ipcRenderer.invoke('get-nsaids', vn),
   fitSettings: (height) => ipcRenderer.send('fit-settings', height),
