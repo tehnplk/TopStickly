@@ -1,8 +1,10 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, screen, Tray } from 'electron'
 import path from 'node:path'
 import { dockTop, undock, setRect, primaryScreen } from './appbar.js'
 import { loadDbConfig, saveDbConfig, testDb, getPatient, getNsaids, getRecentLab } from './db.js'
 import { readHn, watchClicks } from './hosxp.js'
+import updater from 'electron-updater' // CommonJS package: named ESM imports aren't available
+const { autoUpdater } = updater
 
 const BAR_HEIGHT = 30
 const COLLAPSED_WIDTH = 120
@@ -13,7 +15,38 @@ const ANIM_MS = 200
 const SETTINGS_WIDTH = 520
 const HN_POLL_MS = 1000
 
+const UPDATE_CHECK_MS = 4 * 60 * 60 * 1000 // the bar runs all day: check GitHub Releases periodically
+
+let tray // module-level: a Tray that goes out of scope gets garbage-collected and vanishes
+
+// Tray menu; once an update is downloaded it offers to install it (never forced mid-work).
+function setTrayMenu(updateVersion) {
+  const items = [{ label: 'Quit', click: () => app.quit() }]
+  if (updateVersion)
+    items.unshift({ label: `อัปเดตเป็น v${updateVersion} แล้วเปิดใหม่`, click: () => autoUpdater.quitAndInstall() }, { type: 'separator' })
+  tray.setContextMenu(Menu.buildFromTemplate(items))
+}
+
+// Installed builds only: download updates from GitHub Releases in the background; they install on the
+// next quit anyway, or right away from the tray menu.
+function startAutoUpdate() {
+  if (!app.isPackaged) return
+  autoUpdater.on('update-downloaded', ({ version }) => {
+    setTrayMenu(version)
+    tray.displayBalloon({ title: 'TopStickly', content: `ดาวน์โหลดเวอร์ชัน ${version} แล้ว — คลิกขวาที่ไอคอนเพื่ออัปเดต` })
+  })
+  autoUpdater.on('error', (e) => console.error('auto update', e.message))
+  const check = () => autoUpdater.checkForUpdates().catch(() => {}) // offline etc.: try again next round
+  check()
+  setInterval(check, UPDATE_CHECK_MS)
+}
+
 app.whenReady().then(() => {
+  tray = new Tray(path.join(import.meta.dirname, 'tray.png'))
+  tray.setToolTip(`TopStickly v${app.getVersion()}`)
+  setTrayMenu()
+  startAutoUpdate()
+
   const win = new BrowserWindow({
     height: BAR_HEIGHT,
     frame: false,
