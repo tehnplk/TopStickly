@@ -1,9 +1,10 @@
 import { app, BrowserWindow, ipcMain, Menu, screen, Tray } from 'electron'
+import fs from 'node:fs'
 import path from 'node:path'
-import { dockTop, undock, setRect, primaryScreen } from './appbar.js'
+import { dockTop, undock, setRect, barScreen, setBarDisplay, leftButtonDown } from './appbar.js'
 import { loadDbConfig, saveDbConfig, testDb, getPatient } from './db.js'
-import { GROUPS, checkRules, rulesOff, setRuleOn } from './rules.js'
-import { readHn, watchClicks } from './hosxp.js'
+import { GROUPS, checkRules, checkPendingDrug, rulesOff, setRuleOn } from './rules.js'
+import { readHn, readDrugBox, watchClicks } from './hosxp.js'
 import updater from 'electron-updater' // CommonJS package: named ESM imports aren't available
 const { autoUpdater } = updater
 
@@ -44,6 +45,9 @@ function startAutoUpdate(onDownloaded) {
   setInterval(check, UPDATE_CHECK_MS)
 }
 
+// One bar only: a second launch quits at once (the first keeps running).
+if (!app.requestSingleInstanceLock()) app.exit()
+
 app.whenReady().then(() => {
   tray = new Tray(path.join(import.meta.dirname, 'tray.png'))
   tray.setToolTip(`TopStickly v${app.getVersion()}`)
@@ -69,7 +73,19 @@ app.whenReady().then(() => {
   // Chromium pushes its windows into the work area whenever it changes; keep the bar where we want it.
   const pin = () => setRect(win, target)
   win.on('show', pin)
-  screen.on('display-metrics-changed', pin)
+  // Full width of whatever display the bar is on: re-dock when its size/scale changes or displays come
+  // and go (an unplugged display falls back to the primary). A work-area change alone (our own dock
+  // fires one) only re-pins, or it would loop.
+  const redock = () => {
+    if (collapsed) return
+    undock(win)
+    target = dockTop(win, BAR_HEIGHT)
+    pin()
+  }
+  const onMetrics = (_e, _d, changed) => (changed.some((m) => m === 'bounds' || m === 'scaleFactor') ? redock() : pin())
+  screen.on('display-metrics-changed', onMetrics)
+  screen.on('display-added', redock)
+  screen.on('display-removed', redock)
 
   let timer
   function animate(to, opacity, done) {
@@ -96,7 +112,7 @@ app.whenReady().then(() => {
   }
   function collapse() {
     collapsed = true
-    const { x, y, width, scale } = primaryScreen()
+    const { x, y, width, scale } = barScreen()
     const w = Math.round(COLLAPSED_WIDTH * scale)
     const to = { x: x + Math.round((width - w) / 2), y, width: w, height: Math.round(COLLAPSED_HEIGHT * scale) }
     animate(to, COLLAPSED_OPACITY, () => undock(win)) // give the strip back to other apps once shrunk
@@ -107,12 +123,38 @@ app.whenReady().then(() => {
     // skip mid-animation so the collapse's undock callback isn't cancelled
     if (collapsed && !timer) animate({ ...target }, over ? HOVER_OPACITY : COLLAPSED_OPACITY)
   })
+  // Which display the bar sits on: the user drags it there (grip = the icon), remembered across runs.
+  const barFile = path.join(app.getPath('userData'), 'bar.json')
+  try {
+    setBarDisplay(JSON.parse(fs.readFileSync(barFile, 'utf8')).display)
+  } catch {} // first run: primary display
+  let dragTimer
+  const saveDisplay = () => fs.writeFileSync(barFile, JSON.stringify({ display: barScreen().id }))
+  ipcMain.on('drag', (_e, dragging) => {
+    clearInterval(dragTimer)
+    if (!dragging) return
+    // while the button is held, follow the cursor: re-dock on whichever display it is over.
+    // Stops by itself once the button is up, even if the page never reports the release.
+    dragTimer = setInterval(() => {
+      if (!leftButtonDown()) return clearInterval(dragTimer)
+      const d = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+      if (collapsed || d.id === barScreen().id) return
+      setBarDisplay(d.id)
+      redock()
+      saveDisplay()
+    }, 50)
+  })
+
   target = dockTop(win, BAR_HEIGHT)
   pin()
   win.once('ready-to-show', () => win.show())
   win.on('close', () => {
     clearInterval(timer)
-    screen.off('display-metrics-changed', pin) // undock fires it after the window is gone
+    clearInterval(dragTimer)
+    // undock fires these after the window is gone
+    screen.off('display-metrics-changed', onMetrics)
+    screen.off('display-added', redock)
+    screen.off('display-removed', redock)
     undock(win)
   })
 
@@ -126,10 +168,10 @@ app.whenReady().then(() => {
   let alerts = noAlerts()
   let shown = new Set() // RDU rule ids already popped up for this patient
   const sendPatient = () => win.webContents.send('patient', patient)
-  // badge = rules switched on / all rules, per group (a setting, not a warning)
+  // badge = rules this patient meets, per group (checkRules already skips rules switched off)
   const sendAlerts = () => {
     const off = new Set(rulesOff())
-    const count = Object.fromEntries(Object.entries(GROUPS).map(([g, { rules }]) => [g, { on: rules.filter((r) => !off.has(r.id)).length, total: rules.length }]))
+    const count = Object.fromEntries(Object.entries(GROUPS).map(([g, { rules }]) => [g, { hits: alerts[g].length, on: rules.filter((r) => !off.has(r.id)).length }]))
     win.webContents.send('alerts', count)
   }
   // Re-read the latest visit and run the rules; pop up RDU rules hit for the first time.
@@ -148,12 +190,29 @@ app.whenReady().then(() => {
     fresh.forEach((h) => shown.add(h.id))
     if (fresh.length) openWarning(fresh.map((h) => ({ group: 'rdu', rule: h.name, rows: h.rows })))
   }
+  // A drug picked in HOSxP's drug-name box (not saved yet): warn right away if ordering it would trip an
+  // RDU rule for this visit. Every time the box changes to such a drug (cleared and re-entered = warn
+  // again); the rule then counts as shown, so the post-save recheck doesn't repeat it.
+  let drugText = ''
+  async function checkDrugBox() {
+    const t = readDrugBox()
+    if (t === null || t === drugText) return
+    drugText = t
+    const { hn, vn } = patient
+    if (!hn || !vn || !t.trim()) return
+    const hits = await checkPendingDrug({ hn, vn }, t)
+    if (patient.hn !== hn || drugText !== t) return // moved on while we were querying
+    hits.forEach((h) => shown.add(h.id))
+    if (hits.length) openWarning(hits.map((h) => ({ group: 'rdu', rule: h.name, rows: h.rows })))
+  }
   const hnTimer = setInterval(() => {
+    checkDrugBox()
     const hn = readHn()
     if (hn === null || hn === patient.hn) return
     patient = { hn }
     alerts = noAlerts()
     shown = new Set()
+    drugText = ''
     sendPatient() // show the HN right away, name + last visit follow
     sendAlerts()
     recheck()
@@ -195,8 +254,12 @@ app.whenReady().then(() => {
   })
   load(win)
 
+  // Every modal: no title bar, the page draws its own close button (src/Close.jsx)
   const popup = (opts) =>
     new BrowserWindow({
+      icon: path.join(import.meta.dirname, 'tray.png'), // taskbar icon = the app's, not Electron's default
+      frame: false,
+      resizable: false,
       useContentSize: true,
       minimizable: false,
       maximizable: false,
@@ -210,7 +273,7 @@ app.whenReady().then(() => {
   ipcMain.on('open-settings', () => {
     if (settings) return settings.focus()
     // height: the page reports its real height via 'fit'
-    settings = popup({ width: SETTINGS_WIDTH, height: 400, title: 'ตั้งค่าการเชื่อมต่อ HOSxP', resizable: false })
+    settings = popup({ width: SETTINGS_WIDTH, height: 400, title: 'ตั้งค่าการเชื่อมต่อ HOSxP' })
     settings.on('closed', () => (settings = null))
     load(settings, 'settings')
   })
@@ -220,13 +283,20 @@ app.whenReady().then(() => {
     w?.setContentSize(w.getContentSize()[0], Math.ceil(h))
   })
 
+  // page 'rules' = ตั้งเตือน (settings for everyone), 'hits' = what this patient meets (badge click)
   let rules
-  ipcMain.on('open-rules', (_e, group) => {
-    rules?.destroy() // one at a time, for the badge just clicked
+  function openRules(group, page = 'rules') {
+    rules?.destroy() // one at a time, for the group just picked
     rules = popup({ width: 960, height: 640 })
     rules.on('closed', () => (rules = null))
-    load(rules, `rules?group=${group}`)
-  })
+    load(rules, `${page}?group=${group}`)
+  }
+  ipcMain.on('open-rules', (_e, group) => openRules(group))
+  ipcMain.on('open-hits', (_e, group) => openRules(group, 'hits'))
+  // ตั้งเตือน menu: native, since the 30px bar can't hold a dropdown. x, y = under the button.
+  ipcMain.on('alert-menu', (_e, x, y) =>
+    Menu.buildFromTemplate(Object.entries({ rlu: 'RLU', rdu: 'RDU', claim: 'Claim' }).map(([g, label]) => ({ label, click: () => openRules(g) }))).popup({ window: win, x, y }),
+  )
   ipcMain.handle('get-alerts', (_e, group) => {
     const { hn, name, vstdate, vsttime } = patient
     return { patient: { hn, name, vstdate, vsttime }, group: GROUPS[group], hits: alerts[group], off: rulesOff() }
@@ -247,7 +317,7 @@ app.whenReady().then(() => {
   let warning
   function openWarning(items) {
     warning?.destroy() // one at a time, the latest wins
-    warning = popup({ width: 520, height: 200, frame: false, resizable: false }) // page draws its own close button
+    warning = popup({ width: 520, height: 200 })
     warning.on('closed', () => (warning = null))
     const q = new URLSearchParams({ hn: patient.hn, patient: patient.name ?? '', items: JSON.stringify(items) })
     load(warning, `warn?${q}`)

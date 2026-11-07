@@ -1,17 +1,21 @@
-import { useEffect, useState } from 'react'
-import { ChevronUp, Download, FlaskConical, Pill, Receipt, Settings } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Bell, ChevronUp, Download, FlaskConical, Pill, Receipt, Settings } from 'lucide-react'
 import MonkIcon from './MonkIcon.jsx'
 import { thaiDate } from './format.js'
 
-const bar = { height: '100vh', display: 'flex', alignItems: 'center', background: '#21252B', color: '#e8e8e8', font: '13px system-ui' }
+// userSelect none: the bar is a control strip (and dragged around), never selectable text. Modals still are.
+const bar = { height: '100vh', display: 'flex', alignItems: 'center', background: '#21252B', color: '#e8e8e8', font: '13px system-ui', userSelect: 'none' }
 const btn = { background: 'none', border: 0, color: 'inherit', font: 'inherit', cursor: 'pointer', padding: 0 }
 const badge = { padding: '2px 8px', borderRadius: 10, background: 'rgba(255,255,255,0.12)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }
 const actionStyle = { padding: '0 5px', borderRadius: 3, background: 'rgba(255,255,255,0.15)', fontSize: 11 }
 const ncdBadge = { ...badge, background: '#c62828', color: '#fff', fontWeight: 700, letterSpacing: 0.3, cursor: 'help' }
-// alert group badges: icon instead of the group name, then rules switched on / all rules
+// alert group badges: icon instead of the group name, then how many switched-on rules this patient meets
 const groupBadge = { ...badge, display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }
 const groupOff = { opacity: 0.45 }
-const none = { on: 0, total: 0 }
+const groupHit = { background: '#b45309', color: '#fff', fontWeight: 700 }
+const none = { hits: 0, on: 0 }
+const DRAG_PX = 4
+const labelBtn = { width: 'auto', padding: '0 10px', gap: 5, font: 'inherit' } // bar-btn with icon + text
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false)
@@ -24,6 +28,7 @@ export default function App() {
   useEffect(() => window.bar.onClick(setClick), [])
   const [update, setUpdate] = useState('') // version downloaded and ready to install
   useEffect(() => window.bar.onUpdate(setUpdate), [])
+  const drag = useRef(null) // { x, y, on } while the button is held
 
   const toggle = () => {
     window.bar.setCollapsed(!collapsed)
@@ -44,9 +49,28 @@ export default function App() {
       </button>
     )
 
+  // Hold and drag anywhere on the bar to move it to another display. It only counts as a drag once the
+  // pointer moves past DRAG_PX while held, so a plain click on a button or badge still clicks.
+  const endDrag = () => {
+    if (drag.current?.on) window.bar.drag(false)
+    drag.current = null
+  }
+  const dragHandlers = {
+    onPointerDown: (e) => e.button === 0 && (drag.current = { x: e.clientX, y: e.clientY, on: false }),
+    onPointerMove: (e) => {
+      const d = drag.current
+      if (!d || d.on || Math.hypot(e.clientX - d.x, e.clientY - d.y) < DRAG_PX) return
+      d.on = true
+      e.currentTarget.setPointerCapture(e.pointerId) // keep getting pointerup once the cursor leaves the bar
+      window.bar.drag(true)
+    },
+    onPointerUp: endDrag,
+    onLostPointerCapture: endDrag,
+  }
+
   return (
-    <div style={{ ...bar, paddingLeft: 10 }}>
-      <span title="TopStickly" style={{ display: 'flex' }}>
+    <div style={{ ...bar, paddingLeft: 10, touchAction: 'none' }} {...dragHandlers}>
+      <span style={{ display: 'flex' }}>
         <MonkIcon size={24} />
       </span>
       {hn && (
@@ -70,11 +94,11 @@ export default function App() {
             ['rdu', Pill],
             ['claim', Receipt],
           ].map(([key, Icon]) => {
-            const { on, total } = count[key]
-            const tip = `${key.toUpperCase()}: เปิดเตือน ${on} จาก ${total} กฎ (คลิกเพื่อตั้งค่า)`
+            const { hits, on } = count[key]
+            const tip = `${key.toUpperCase()}: เข้าข่าย ${hits} ข้อ จากกฎที่ตั้งเตือน ${on} ข้อ (คลิกเพื่อดู)`
             return (
-              <button key={key} style={{ ...btn, ...groupBadge, ...(on ? undefined : groupOff) }} onClick={() => window.bar.openRules(key)} title={tip}>
-                <Icon size={14} /> {on}/{total}
+              <button key={key} style={{ ...btn, ...groupBadge, ...(hits ? groupHit : groupOff) }} onClick={() => window.bar.openHits(key)} title={tip}>
+                <Icon size={14} /> {hits}
               </button>
             )
           })}
@@ -90,8 +114,19 @@ export default function App() {
           </>
         )}
       </span>
-      <button className="bar-btn" onClick={() => window.bar.openSettings()} title="ตั้งค่า">
-        <Settings size={16} />
+      <button
+        className="bar-btn"
+        style={labelBtn}
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect()
+          window.bar.alertMenu(Math.round(r.left), Math.round(r.bottom))
+        }}
+        title="ตั้งเตือน RLU / RDU / Claim"
+      >
+        <Bell size={15} /> ตั้งเตือน
+      </button>
+      <button className="bar-btn" style={labelBtn} onClick={() => window.bar.openSettings()} title="ตั้งค่าการเชื่อมต่อ HOSxP">
+        <Settings size={15} /> เชื่อมต่อ
       </button>
       <button className="bar-btn" onClick={toggle} title="ย่อ">
         <ChevronUp size={18} />

@@ -14,9 +14,11 @@ const APPBARDATA = koffi.struct('APPBARDATA', {
 const SHAppBarMessage = koffi
   .load('shell32.dll')
   .func('uintptr_t __stdcall SHAppBarMessage(uint32_t msg, _Inout_ APPBARDATA *data)')
-const SetWindowPos = koffi
-  .load('user32.dll')
-  .func('bool __stdcall SetWindowPos(intptr hWnd, intptr after, int x, int y, int cx, int cy, uint32 flags)')
+const user32 = koffi.load('user32.dll')
+const SetWindowPos = user32.func('bool __stdcall SetWindowPos(intptr hWnd, intptr after, int x, int y, int cx, int cy, uint32 flags)')
+const GetAsyncKeyState = user32.func('int16 __stdcall GetAsyncKeyState(int vKey)')
+// Is the left mouse button held right now (anywhere on screen)?
+export const leftButtonDown = () => (GetAsyncKeyState(0x01) & 0x8000) !== 0
 
 const ABM_NEW = 0, ABM_REMOVE = 1, ABM_QUERYPOS = 2, ABM_SETPOS = 3, ABE_TOP = 1
 const SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_NOSENDCHANGING = 0x400
@@ -34,10 +36,13 @@ function data(win) {
   }
 }
 
-// Primary display bounds and scale in physical pixels.
-export function primaryScreen() {
-  const d = screen.getPrimaryDisplay()
-  return { ...screen.dipToScreenRect(null, d.bounds), scale: d.scaleFactor }
+// The display the bar lives on (dragged there by the user); the primary one if unset or unplugged.
+let barDisplayId = null
+export const setBarDisplay = (id) => (barDisplayId = id)
+// Bar display bounds and scale in physical pixels.
+export function barScreen() {
+  const d = screen.getAllDisplays().find((x) => x.id === barDisplayId) ?? screen.getPrimaryDisplay()
+  return { ...screen.dipToScreenRect(null, d.bounds), scale: d.scaleFactor, id: d.id }
 }
 
 // Places the window in physical pixels. SWP_NOSENDCHANGING skips WM_WINDOWPOSCHANGING, where Windows
@@ -48,7 +53,7 @@ export function setRect(win, { x, y, width, height }) {
 
 // Registers the reserved strip and returns its rect in physical pixels.
 export function dockTop(win, heightDip) {
-  const { x, y, width, scale } = primaryScreen()
+  const { x, y, width, scale } = barScreen()
   const h = Math.round(heightDip * scale)
 
   const abd = data(win)

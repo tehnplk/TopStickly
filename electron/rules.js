@@ -52,73 +52,84 @@ const gfr = (days) => `(SELECT o2.lab_order_result + 0 FROM lab_head h2
 const gfrNormal = `${gfr()} >= 60`
 const LIPIDS = ['Chol', 'TG', 'HDL', 'LDL-C (cal.)']
 
-// RLU rules from แนวทาง RLU ฉบับปรับปรุงครั้งที่ 3 (กรมวิทยาศาสตร์การแพทย์ 2566), page numbers in criteria.
+// RLU rules from แนวทาง RLU ฉบับปรับปรุงครั้งที่ 3 (กรมวิทยาศาสตร์การแพทย์ 2566); ref = page in that guideline.
 // Only "ordered more often than recommended" rules whose labs exist at this hospital.
 const RLU = [
   {
     id: 'dmA1c',
     name: 'DM: HbA1c ไม่เกิน 4 ครั้ง/ปี',
-    criteria: 'ผู้ป่วยเบาหวาน (E10–E14) ตรวจ HbA1c ห่างกันอย่างน้อย 3 เดือน (ปีละ 2–4 ครั้ง) · หน้า 13',
+    criteria: 'ผู้ป่วยเบาหวาน (E10–E14) ตรวจ HbA1c ห่างกันอย่างน้อย 3 เดือน (ปีละ 2–4 ครั้ง)',
+    ref: 'หน้า 13',
     sql: labWithin(['HbA1C'], 90, dx(DM)),
   },
   {
     id: 'dmCr',
     name: 'DM: Creatinine/eGFR ปีละครั้งถ้าปกติ',
-    criteria: 'เบาหวาน และ eGFR ล่าสุด ≥ 60: ตรวจ Cr ปีละครั้ง · หน้า 14',
+    criteria: 'เบาหวาน และ eGFR ล่าสุด ≥ 60: ตรวจ Cr ปีละครั้ง',
+    ref: 'หน้า 14',
     sql: labWithin(['Cr.', 'GFR'], 365, dx(DM), gfrNormal),
   },
   {
     id: 'dmLipid',
     name: 'DM: Lipid ไม่ถี่กว่าทุก 3 เดือน',
-    criteria: 'เบาหวาน: lipid ปกติตรวจปีละครั้ง ผิดปกติทุก 3–6 เดือน (สั่งซ้ำภายใน 90 วัน = ถี่เกิน) · หน้า 14',
+    criteria: 'เบาหวาน: lipid ปกติตรวจปีละครั้ง ผิดปกติทุก 3–6 เดือน (สั่งซ้ำภายใน 90 วัน = ถี่เกิน)',
+    ref: 'หน้า 14',
     sql: labWithin(LIPIDS, 90, dx(DM)),
   },
   {
     id: 'dmUacr',
     name: 'DM: UACR ไม่ถี่กว่าทุก 3 เดือน',
-    criteria: 'เบาหวาน: UACR ปกติตรวจปีละครั้ง ผิดปกติทุก 3–6 เดือน (สั่งซ้ำภายใน 90 วัน = ถี่เกิน) · หน้า 14',
+    criteria: 'เบาหวาน: UACR ปกติตรวจปีละครั้ง ผิดปกติทุก 3–6 เดือน (สั่งซ้ำภายใน 90 วัน = ถี่เกิน)',
+    ref: 'หน้า 14',
     sql: labWithin(['Alb./Cr.Ratio.(Level)', 'Alb./Cr. Ratio(ค่า)', 'Alb.Urine (ค่า)', 'Mic.Cr.urine'], 90, dx(DM)),
   },
   {
     id: 'htCr',
     name: 'HT: Creatinine ปีละครั้งถ้าปกติ',
-    criteria: 'ความดันโลหิตสูง (I10–I15) ไม่เป็นเบาหวาน และ eGFR ล่าสุด ≥ 60: ตรวจ Cr ปีละครั้ง · หน้า 15',
+    criteria: 'ความดันโลหิตสูง (I10–I15) ไม่เป็นเบาหวาน และ eGFR ล่าสุด ≥ 60: ตรวจ Cr ปีละครั้ง',
+    ref: 'หน้า 15',
     sql: labWithin(['Cr.', 'GFR'], 365, dx(HT), `NOT ${dx(DM)}`, gfrNormal),
   },
   {
     id: 'cuLipid',
     name: 'ตรวจสุขภาพ: Lipid ทุก 5 ปี',
-    criteria: 'อายุ ≥ 20 ปี ไม่มี DM/HT/ไขมันสูง (E78)/CKD: ตรวจไขมันทุก 5 ปี · หน้า 7',
+    criteria: 'อายุ ≥ 20 ปี ไม่มี DM/HT/ไขมันสูง (E78)/CKD: ตรวจไขมันทุก 5 ปี',
+    ref: 'หน้า 7',
     sql: labWithin(LIPIDS, 1825, age('>= 20'), `NOT ${dx([DM, HT, LIPID, CKD].join('|'))}`),
   },
   {
     id: 'cuFpg',
     name: 'ตรวจสุขภาพ: FPG อายุ 35–60 ทุก 3 ปี',
-    criteria: 'อายุ 35–60 ปี ไม่มี DM/ภาวะก่อนเบาหวาน (R73): ตรวจ FPG ทุก 3 ปี · หน้า 7',
+    criteria: 'อายุ 35–60 ปี ไม่มี DM/ภาวะก่อนเบาหวาน (R73): ตรวจ FPG ทุก 3 ปี',
+    ref: 'หน้า 7',
     sql: labWithin(['FBS(Non DM)'], 1095, age('BETWEEN 35 AND 60'), `NOT ${dx([DM, PREDM].join('|'))}`),
   },
   {
     id: 'cuFpg60',
     name: 'ตรวจสุขภาพ: FPG อายุ > 60 ปีละครั้ง',
-    criteria: 'อายุ > 60 ปี ไม่มี DM/ภาวะก่อนเบาหวาน: ตรวจ FPG ปีละครั้ง · หน้า 7',
+    criteria: 'อายุ > 60 ปี ไม่มี DM/ภาวะก่อนเบาหวาน: ตรวจ FPG ปีละครั้ง',
+    ref: 'หน้า 7',
     sql: labWithin(['FBS(Non DM)'], 365, age('> 60'), `NOT ${dx([DM, PREDM].join('|'))}`),
   },
   {
     id: 'cuCr',
     name: 'ตรวจสุขภาพ: Creatinine ปีละครั้ง',
-    criteria: 'อายุ ≥ 35 ปี ไม่มี DM/HT/CKD: ตรวจ Cr ปีละครั้ง · หน้า 7',
+    criteria: 'อายุ ≥ 35 ปี ไม่มี DM/HT/CKD: ตรวจ Cr ปีละครั้ง',
+    ref: 'หน้า 7',
     sql: labWithin(['Cr.', 'GFR'], 365, age('>= 35'), `NOT ${dx([DM, HT, CKD].join('|'))}`),
   },
   {
     id: 'cuHbsag',
     name: 'ตรวจสุขภาพ: HBsAg ครั้งเดียว',
-    criteria: 'เคยตรวจ HBsAg แล้ว และไม่มีประวัติไวรัสตับอักเสบบี (B16, B18.0–1, Z22.5): ตรวจครั้งเดียว (ยกเว้น ALT/AST สูง หรือกลุ่มเสี่ยง) · หน้า 8',
+    criteria: 'เคยตรวจ HBsAg แล้ว และไม่มีประวัติไวรัสตับอักเสบบี (B16, B18.0–1, Z22.5): ตรวจครั้งเดียว (ยกเว้น ALT/AST สูง หรือกลุ่มเสี่ยง)',
+    ref: 'หน้า 8',
     sql: labWithin(['HBsAg'], null, `NOT ${dx(HBV)}`),
   },
   {
     id: 'cuHcv',
     name: 'ตรวจสุขภาพ: Anti-HCV ครั้งเดียว',
-    criteria: 'เคยตรวจ Anti-HCV แล้ว และไม่มีประวัติไวรัสตับอักเสบซี (B17.1, B18.2): ตรวจครั้งเดียว (ยกเว้น ALT/AST สูง หรือมีความเสี่ยงใหม่) · หน้า 8',
+    criteria: 'เคยตรวจ Anti-HCV แล้ว และไม่มีประวัติไวรัสตับอักเสบซี (B17.1, B18.2): ตรวจครั้งเดียว (ยกเว้น ALT/AST สูง หรือมีความเสี่ยงใหม่)',
+    ref: 'หน้า 8',
     sql: labWithin(['Anti -HCV'], null, `NOT ${dx(HCV)}`),
   },
 ]
@@ -132,21 +143,24 @@ const NSAIDS = [
   'CELECOXIB', 'ETORICOXIB', 'PARECOXIB', 'PHENYLBUTAZONE',
 ].join('|')
 
+// The visit's items: what is saved in opitemrece, plus :icode = the drug sitting in HOSxP's drug-name
+// box but not saved yet ('' = none), so RDU can warn before the order is saved.
+const ITEMS = `(SELECT icode, qty, drugusage, item_no FROM opitemrece WHERE vn = :vn
+         UNION ALL SELECT :icode, NULL, NULL, 999999)`
 // Drugs of this visit matching `match`, filtered by extra `AND ...` conditions.
 const drugsIn = (match, ...where) => `
 SELECT d.name, d.strength, o.qty, d.units,
        TRIM(CONCAT_WS(' ', du.name1, du.name2, du.name3)) AS howto
-  FROM opitemrece o
+  FROM ${ITEMS} o
   JOIN drugitems d ON d.icode = o.icode
   LEFT JOIN drugusage du ON du.drugusage = o.drugusage
- WHERE o.vn = :vn
-   AND ${match}${where.map((w) => `
+ WHERE ${match}${where.map((w) => `
    AND ${w}`).join('')}
  ORDER BY o.item_no, d.name`
 const drug = (re, t = 'd') => `CONCAT_WS(' ', ${t}.name, ${t}.generic_name) REGEXP '${re}'`
 const visitDx = (re) => `EXISTS (SELECT 1 FROM ovstdiag WHERE vn = :vn AND icd10 REGEXP '${re}')`
-const visitDrug = (re) => `EXISTS (SELECT 1 FROM opitemrece o2 JOIN drugitems d2 ON d2.icode = o2.icode
-                WHERE o2.vn = :vn AND ${drug(re, 'd2')})`
+const visitDrug = (re) => `EXISTS (SELECT 1 FROM ${ITEMS} o2 JOIN drugitems d2 ON d2.icode = o2.icode
+                WHERE ${drug(re, 'd2')})`
 
 // Systemic antibiotics (ATC J01). drugitems.atc_code is empty and the antibiotic flag is incomplete here,
 // so also match generic names; skip topical forms and oral metronidazole (P01AB, not J01).
@@ -169,40 +183,46 @@ const RDU = [
   {
     id: 'ri',
     name: 'URI/หลอดลมอักเสบเฉียบพลัน ได้ยาปฏิชีวนะ',
-    criteria: 'Dx visit นี้อยู่ในชุด URI 50 รหัส (J00–J06, J10.1, J11.1, J20–J21, H65–H67, H72) และได้ยาปฏิชีวนะ (J01) · เป้า ≤20–30%',
+    criteria: 'Dx visit นี้อยู่ในชุด URI 50 รหัส (J00–J06, J10.1, J11.1, J20–J21, H65–H67, H72) และได้ยาปฏิชีวนะ (J01)',
+    ref: 'เป้า ≤20–30%',
     sql: drugsIn(ABX, visitDx(URI)),
   },
   {
     id: 'ad',
     name: 'อุจจาระร่วงเฉียบพลัน ได้ยาปฏิชีวนะ',
-    criteria: 'Dx visit นี้ A00–A09, K52.1/8/9 (อุจจาระร่วงเฉียบพลัน) และได้ยาปฏิชีวนะ (J01) · เป้า ≤20%',
+    criteria: 'Dx visit นี้ A00–A09, K52.1/8/9 (อุจจาระร่วงเฉียบพลัน) และได้ยาปฏิชีวนะ (J01)',
+    ref: 'เป้า ≤20%',
     sql: drugsIn(ABX, visitDx(AD)),
   },
   {
     id: 'ftw',
     name: 'แผลสดจากอุบัติเหตุ ได้ยาปฏิชีวนะ',
-    criteria: 'Dx visit นี้ S/T/W/X ตามชุด FTW (แผลสดภายใน 6 ชม.) และได้ยาปฏิชีวนะ (J01) กินหรือฉีด · เป้า ≤40–50%',
+    criteria: 'Dx visit นี้ S/T/W/X ตามชุด FTW (แผลสดภายใน 6 ชม.) และได้ยาปฏิชีวนะ (J01) กินหรือฉีด',
+    ref: 'เป้า ≤40–50%',
     sql: drugsIn(ABX, visitDx(FTW)),
   },
   {
     id: 'ras',
     name: 'HT ได้ RAS blockade 2 ชนิดร่วมกัน',
-    criteria: 'Dx visit นี้ I10 และได้ยา 2 กลุ่มขึ้นไปใน ACEI (-pril), ARB (-sartan), aliskiren (ยกเว้น captopril stat dose) · เป้า 0%',
+    criteria: 'Dx visit นี้ I10 และได้ยา 2 กลุ่มขึ้นไปใน ACEI (-pril), ARB (-sartan), aliskiren (ยกเว้น captopril stat dose)',
+    ref: 'เป้า 0%',
     sql: drugsIn(drug('PRIL|SARTAN|ALISKIREN'), visitDx('^I10'), `(${visitDrug('PRIL')} + ${visitDrug('SARTAN')} + ${visitDrug('ALISKIREN')}) >= 2`),
   },
   {
     id: 'ckdNsaid',
     name: 'CKD ระยะ 3 ขึ้นไป ได้ NSAIDs',
-    criteria: 'เคยวินิจฉัย N18.3, N18.4, N18.5, N18.9 และ visit นี้ได้ NSAIDs กินหรือฉีด (M01A, ไม่นับ aspirin) · เป้า ≤10%',
+    criteria: 'เคยวินิจฉัย N18.3, N18.4, N18.5, N18.9 และ visit นี้ได้ NSAIDs กินหรือฉีด (M01A, ไม่นับ aspirin)',
+    ref: 'เป้า ≤10%',
     sql: drugsIn(drug(NSAIDS), dx('^N18[3459]')),
   },
   {
     id: 'nsaidDup',
     name: 'ได้ NSAIDs ซ้ำซ้อน ≥ 2 ชนิด',
-    criteria: 'visit นี้ได้ NSAIDs ตั้งแต่ 2 ชนิดขึ้นไป (ยกเว้น aspirin ร่วมกับ NSAID) · เป้า ≤5%',
+    criteria: 'visit นี้ได้ NSAIDs ตั้งแต่ 2 ชนิดขึ้นไป (ยกเว้น aspirin ร่วมกับ NSAID)',
+    ref: 'เป้า ≤5%',
     // ponytail: "ชนิด" = distinct generic_name, which this hospital doesn't fill consistently
-    sql: drugsIn(drug(NSAIDS), `(SELECT COUNT(DISTINCT d2.generic_name) FROM opitemrece o2 JOIN drugitems d2 ON d2.icode = o2.icode
-                WHERE o2.vn = :vn AND ${drug(NSAIDS, 'd2')}) >= 2`),
+    sql: drugsIn(drug(NSAIDS), `(SELECT COUNT(DISTINCT d2.generic_name) FROM ${ITEMS} o2 JOIN drugitems d2 ON d2.icode = o2.icode
+                WHERE ${drug(NSAIDS, 'd2')}) >= 2`),
   },
   {
     id: 'metformin',
@@ -213,31 +233,36 @@ const RDU = [
   {
     id: 'glib',
     name: 'DM ได้ glibenclamide ในผู้สูงอายุ/ไตเสื่อม',
-    criteria: 'เบาหวาน E11 ได้ glibenclamide และ อายุ > 65 ปี หรือ eGFR ล่าสุดใน 6 เดือน < 60 · เป้า ≤5%',
+    criteria: 'เบาหวาน E11 ได้ glibenclamide และ อายุ > 65 ปี หรือ eGFR ล่าสุดใน 6 เดือน < 60',
+    ref: 'เป้า ≤5%',
     sql: drugsIn(drug('GLIBENCLAMIDE|GLYBURIDE'), dx('^E11'), `(${age('> 65')} OR ${gfr(180)} < 60)`),
   },
   {
     id: 'elderBzd',
     name: 'ผู้สูงอายุได้ benzodiazepine ออกฤทธิ์ยาว',
-    criteria: 'อายุ ≥ 65 ปี ได้ chlordiazepoxide, diazepam, clorazepate ชนิดกิน · เป้า ≤5%',
+    criteria: 'อายุ ≥ 65 ปี ได้ chlordiazepoxide, diazepam, clorazepate ชนิดกิน',
+    ref: 'เป้า ≤5%',
     sql: drugsIn(drug('CHLORDIAZEPOXIDE|DIAZEPAM|CLORAZEPATE'), age('>= 65'), `COALESCE(d.dosageform, '') NOT REGEXP 'inj'`),
   },
   {
     id: 'childAntihist',
     name: 'เด็ก URI ได้ antihistamine ชนิดไม่ง่วง',
-    criteria: 'อายุ ≤ 12 ปี Dx visit นี้อยู่ในชุด URI และได้ cetirizine, levocetirizine, desloratadine, fexofenadine, loratadine · เป้า ≤20%',
+    criteria: 'อายุ ≤ 12 ปี Dx visit นี้อยู่ในชุด URI และได้ cetirizine, levocetirizine, desloratadine, fexofenadine, loratadine',
+    ref: 'เป้า ≤20%',
     sql: drugsIn(drug(SEDATING_FREE), age('<= 12'), visitDx(URI)),
   },
   {
     id: 'pregX',
     name: 'ตั้งครรภ์ได้ยาที่ห้ามใช้',
-    criteria: 'Dx visit นี้ Z32.1, Z33, Z34, Z35 (ตั้งครรภ์) และได้ warfarin, statins, ergots (ยกเว้น warfarin ใน mechanical heart valve Z95.2) · เป้า 0 ราย',
+    criteria: 'Dx visit นี้ Z32.1, Z33, Z34, Z35 (ตั้งครรภ์) และได้ warfarin, statins, ergots (ยกเว้น warfarin ใน mechanical heart valve Z95.2)',
+    ref: 'เป้า 0 ราย',
     sql: drugsIn(drug(PREG_X), visitDx(PREG), `NOT (${drug('WARFARIN')} AND ${dx('^Z952')})`),
   },
   {
     id: 'asthmaIcs',
     name: 'หืดไม่ได้ inhaled corticosteroid',
-    criteria: 'Dx visit นี้ J45/J46 (หืด) และไม่ได้ ICS (budesonide, fluticasone, beclometasone, ciclesonide, mometasone) ใน visit นี้ · เป้า ≥80% ได้ ICS',
+    criteria: 'Dx visit นี้ J45/J46 (หืด) และไม่ได้ ICS (budesonide, fluticasone, beclometasone, ciclesonide, mometasone) ใน visit นี้',
+    ref: 'เป้า ≥80% ได้ ICS',
     sql: `
 SELECT icd10 AS dx FROM ovstdiag
  WHERE vn = :vn AND icd10 REGEXP '^J4[56]'
@@ -258,16 +283,33 @@ export const GROUPS = {
 }
 
 // { group: [{ id, name, rows }] } — only switched-on rules that returned rows. A failing rule is logged and skipped.
-export async function checkRules(params) {
+// params = { hn, vn, icode? } (icode: a pending, unsaved drug — see ITEMS).
+export async function checkRules(params, groups = Object.keys(GROUPS)) {
   const off = new Set(rulesOff())
   const out = {}
-  for (const [group, { rules }] of Object.entries(GROUPS)) {
+  for (const group of groups) {
     out[group] = []
-    for (const { id, name, sql } of rules) {
+    for (const { id, name, sql } of GROUPS[group].rules) {
       if (off.has(id)) continue
-      const rows = await runSql(sql, params).catch((e) => (console.error('rule', id, e.message), []))
+      const rows = await runSql(sql, { icode: '', ...params }).catch((e) => (console.error('rule', id, e.message), []))
       if (rows.length) out[group].push({ id, name, rows })
     }
   }
   return out
+}
+
+// The drug in HOSxP's drug-name box ("<name> <strength> <units>", as HOSxP fills it after a pick) →
+// the RDU rules it would trip for this visit if ordered: [{ id, name, rows }], only rules whose rows
+// include that drug (a rule already hit by saved drugs alone is the badge's job).
+export async function checkPendingDrug({ hn, vn }, boxText) {
+  const t = boxText.trim()
+  if (!t || !vn) return []
+  const [d] = await runSql(
+    `SELECT icode, name FROM drugitems WHERE istatus = 'Y' AND :t IN (CONCAT_WS(' ', name, strength, units), name)
+      ORDER BY CHAR_LENGTH(name) DESC LIMIT 1`,
+    { t }
+  )
+  if (!d) return []
+  const { rdu } = await checkRules({ hn, vn, icode: d.icode }, ['rdu'])
+  return rdu.filter((h) => h.rows.some((r) => r.name === d.name))
 }

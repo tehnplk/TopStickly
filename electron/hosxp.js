@@ -93,6 +93,34 @@ export function readHn() {
   return ''
 }
 
+// --- Drug-name box (การสั่งยา) ---
+// Locator: a visible TcxLabel "ชื่อยา/ค่าบริการ", then the edit right under it (same panel, left-aligned).
+// HOSxP fills the box with "<name> <strength> <units>" once a drug is picked.
+const DRUG_LABEL = /^\s*ชื่อยา\s*\/\s*ค่าบริการ\s*$/
+function editBelow(label) {
+  const parent = GetParent(label), lr = rect(label)
+  return children(parent, (h) => GetParent(h) === parent && IsWindowVisible(h) && /Edit$/.test(className(h)))
+    .map((h) => ({ h, r: rect(h) }))
+    .filter(({ r }) => r.top >= lr.bottom - 2 && r.top - lr.bottom <= 40 && Math.abs(r.left - lr.left) <= 20)
+    .sort((a, b) => a.r.top - b.r.top)[0]?.h
+}
+let drugCache = { top: 0, edit: null }
+// Text of the drug-name box on the top HOSxP window; '' when there is none, null when HOSxP is busy.
+// ponytail: rescans the window each tick while no box is found; cache per window like readHn if it shows up in profiles
+export function readDrugBox() {
+  const windows = hosxpWindows()
+  const top = windows[0] ?? 0
+  if (top !== drugCache.top || !drugCache.edit || !IsWindowVisible(drugCache.edit)) {
+    let edit = null
+    for (const w of windows) {
+      const label = children(w, (h) => IsWindowVisible(h) && className(h) === 'TcxLabel' && DRUG_LABEL.test(text(h) ?? ''))[0]
+      if (label && (edit = editBelow(label))) break
+    }
+    drugCache = { top, edit }
+  }
+  return drugCache.edit ? text(drugCache.edit) : ''
+}
+
 // --- Mouse actions -------------------------------------------------------------------------------
 // A global low-level mouse hook (no injection into HOSxP), running in its own worker thread
 // (mousehook.js); here we only turn click points into HOSxP controls.

@@ -1,19 +1,31 @@
 import { Fragment, useEffect, useState } from 'react'
-import { Bell, BellOff, CircleCheck, CircleMinus, FileText, TriangleAlert } from 'lucide-react'
-import { thaiDate } from './format.js'
+import { Bell, BellOff, Check, Copy, FileText, Search } from 'lucide-react'
+import Modal, { tbl as s } from './Modal.jsx'
 
 const AMBER = '#b45309'
-const GREEN = '#2e7d32'
-const s = {
-  page: { font: '14px system-ui', padding: 24, color: '#222', background: '#fff', height: '100vh', boxSizing: 'border-box', overflow: 'auto' },
-  head: { display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 18 },
-  table: { width: '100%', borderCollapse: 'collapse', marginBottom: 22 },
-  th: { textAlign: 'left', fontWeight: 600, fontSize: 13, color: '#555', padding: '8px 10px', borderBottom: '2px solid #e0e0e0', background: '#fafafa', whiteSpace: 'nowrap' },
-  td: { padding: '8px 10px', borderBottom: '1px solid #eee', verticalAlign: 'top' },
-  sqlBtn: { border: 0, background: 'none', padding: 4, cursor: 'pointer', color: '#555', display: 'flex' },
-  sql: { margin: 0, padding: 12, background: '#1e1e1e', color: '#d4d4d4', font: '12px Consolas, monospace', whiteSpace: 'pre-wrap', borderRadius: 4 },
-  hitHead: { display: 'flex', alignItems: 'center', gap: 8, color: AMBER, fontWeight: 600, margin: '0 0 8px' },
-  note: { color: '#777', padding: '24px 0', textAlign: 'center' },
+const sqlBtn = { border: 0, background: 'none', padding: 2, cursor: 'pointer', color: '#555', display: 'flex', margin: '0 auto' }
+const search = { marginLeft: 'auto', WebkitAppRegion: 'no-drag', display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px', border: '1px solid #ccc', borderRadius: 4 }
+const searchInput = { border: 0, outline: 'none', font: 'inherit', padding: '3px 0', width: 200 }
+const copyBtn = { position: 'absolute', top: 4, right: 4, width: 24, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #444', borderRadius: 4, background: '#2d2d2d', color: '#ccc', cursor: 'pointer' }
+const sqlPre = { margin: 0, padding: '8px 36px 8px 10px', background: '#1e1e1e', color: '#d4d4d4', font: '11px/1.4 Consolas, monospace', whiteSpace: 'pre-wrap', borderRadius: 4 }
+
+// SQL text with a copy icon in its corner; the icon turns into a tick for a moment once copied
+function SqlBlock({ sql }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    await navigator.clipboard.writeText(sql)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  const Icon = copied ? Check : Copy
+  return (
+    <div style={{ position: 'relative' }}>
+      <pre style={sqlPre}>{sql}</pre>
+      <button style={copyBtn} onClick={copy} title={copied ? 'คัดลอกแล้ว' : 'คัดลอก SQL'} aria-label="คัดลอก SQL">
+        <Icon size={13} color={copied ? '#4caf50' : undefined} />
+      </button>
+    </div>
+  )
 }
 
 // เตือน/ไม่เตือน toggle button: the bell icon is the label
@@ -25,137 +37,105 @@ function Toggle({ on, onChange }) {
       aria-label={on ? 'เตือน' : 'ไม่เตือน'}
       title={on ? 'เตือน (กดเพื่อปิด)' : 'ไม่เตือน (กดเพื่อเปิด)'}
       onClick={() => onChange(!on)}
-      style={{ width: 32, height: 28, borderRadius: 4, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${on ? AMBER : '#ccc'}`, background: on ? AMBER : '#fff', color: on ? '#fff' : '#999' }}
+      style={{ width: 26, height: 20, margin: '0 auto', padding: 0, borderRadius: 4, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${on ? AMBER : '#ccc'}`, background: on ? AMBER : '#fff', color: on ? '#fff' : '#999' }}
     >
-      <Icon size={15} />
+      <Icon size={13} />
     </button>
   )
 }
 
-// SQL column aliases → table headers
-const HEAD = { lab: 'Lab', order_date: 'สั่งล่าสุด', order_time: 'เวลา', days_ago: 'ผ่านมา (วัน)', result: 'ผล', name: 'ชื่อยา', strength: 'ความแรง', qty: 'จำนวน', units: 'หน่วย', howto: 'วิธีใช้', dx: 'ICD-10' }
-const cell = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? thaiDate(v) : v ?? '')
-
-// Large modal: every rule in one alert group (ลำดับ / กฎ / Criteria / SQL), then the rows behind each hit.
+// ตั้งเตือน: which rules of one group warn, for every patient (ลำดับ / กฎ / Criteria / SQL / เตือน).
 export default function Rules() {
   const key = new URLSearchParams(location.hash.split('?')[1]).get('group')
   const [data, setData] = useState(null)
   const [open, setOpen] = useState(null) // rule id whose SQL is shown
+  const [q, setQ] = useState('')
   useEffect(() => {
-    window.bar.getAlerts(key).then((d) => {
-      document.title = d.group.title
-      setData(d)
-    })
+    window.bar.getAlerts(key).then(setData)
   }, [])
   if (!data) return null
-  const { patient: p, group, hits, off } = data
-  const hit = Object.fromEntries(hits.map((h) => [h.id, h]))
+  const { group, off } = data
   const toggle = async (id, on) => setData({ ...data, ...(await window.bar.setRule(key, id, on)) })
+  const onCount = group.rules.filter((r) => !off.includes(r.id)).length
+  // search กฎ + Criteria; ลำดับ keeps the rule's place in the full list
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean)
+  const shown = group.rules.map((r, i) => [r, i]).filter(([r]) => words.every((w) => `${r.name} ${r.criteria}`.toLowerCase().includes(w)))
 
   return (
-    <div style={s.page}>
-      <div style={s.head}>
-        <h3 style={{ margin: 0 }}>{group.title}</h3>
-        {p.hn && (
-          <span>
-            HN <b>{p.hn}</b> {p.name}
-          </span>
-        )}
-        {p.vstdate && (
-          <span style={{ color: '#666' }}>
-            Visit {thaiDate(p.vstdate)} {p.vsttime.slice(0, 5)}
-          </span>
-        )}
-      </div>
-
-      {group.rules.length === 0 ? (
-        <p style={s.note}>ยังไม่มีกฎในกลุ่มนี้</p>
-      ) : (
-        <table style={s.table}>
-          <thead>
-            <tr>
-              <th style={{ ...s.th, width: 50, textAlign: 'center' }}>ลำดับ</th>
-              <th style={s.th}>กฎ</th>
-              <th style={s.th}>Criteria</th>
-              <th style={{ ...s.th, width: 40, textAlign: 'center' }}>SQL</th>
-              <th style={{ ...s.th, width: 56, textAlign: 'center' }} title="เตือน/ไม่เตือน">
-                <Bell size={15} style={{ verticalAlign: 'middle' }} />
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {group.rules.map((r, i) => {
-              const on = !off.includes(r.id)
-              const h = on && hit[r.id]
-              const Status = !on ? CircleMinus : h ? TriangleAlert : CircleCheck
-              return (
-                <Fragment key={r.id}>
-                  <tr style={h ? { background: '#fff7ed' } : undefined}>
-                    <td style={{ ...s.td, textAlign: 'center' }}>{i + 1}</td>
-                    <td style={{ ...s.td, fontWeight: 600, color: h ? AMBER : on ? undefined : '#999' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <Status size={16} color={!on ? '#999' : h ? AMBER : GREEN} />
-                        {r.name}
-                      </span>
-                    </td>
-                    <td style={{ ...s.td, color: on ? undefined : '#999' }}>{r.criteria}</td>
-                    <td style={{ ...s.td, textAlign: 'center' }}>
-                      <button style={s.sqlBtn} onClick={() => setOpen(open === r.id ? null : r.id)} title="ดู SQL">
-                        <FileText size={16} />
-                      </button>
-                    </td>
-                    <td style={s.td}>
-                      <div style={{ display: 'flex', justifyContent: 'center' }}>
-                        <Toggle on={on} onChange={(v) => toggle(r.id, v)} />
-                      </div>
-                    </td>
-                  </tr>
-                  {open === r.id && (
+    <Modal
+      title={
+        <>
+          <Bell size={15} /> ตั้งเตือน · {group.title}
+        </>
+      }
+      extra={
+        group.rules.length > 0 && (
+          <>
+            <span style={{ color: '#666' }}>
+              เปิดเตือน {onCount} จาก {group.rules.length} กฎ
+            </span>
+            <label style={search}>
+              <Search size={13} color="#888" />
+              <input style={searchInput} type="search" placeholder="ค้นหาเรื่อง / เงื่อนไข" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+            </label>
+          </>
+        )
+      }
+    >
+        {group.rules.length === 0 ? (
+          <p style={s.note}>ยังไม่มีกฎในกลุ่มนี้</p>
+        ) : (
+          <table style={{ ...s.table, tableLayout: 'fixed' }}>{/* fixed: columns don't jump while searching */}
+            <thead>
+              <tr>
+                <th style={{ ...s.th, width: 36, textAlign: 'center' }}>ลำดับ</th>
+                <th style={{ ...s.th, width: 220 }}>เรื่องที่เตือน</th>
+                <th style={s.th}>เงื่อนไข</th>
+                <th style={{ ...s.th, width: 30, textAlign: 'center' }}>SQL</th>
+                <th style={{ ...s.th, width: 38, textAlign: 'center' }} title="เตือน/ไม่เตือน">
+                  <Bell size={13} style={{ verticalAlign: 'middle' }} />
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.length === 0 && (
+                <tr>
+                  <td style={{ ...s.td, ...s.note }} colSpan={5}>
+                    ไม่พบกฎที่ตรงกับ "{q}"
+                  </td>
+                </tr>
+              )}
+              {shown.map(([r, i]) => {
+                const on = !off.includes(r.id)
+                const dim = on ? undefined : '#999'
+                return (
+                  <Fragment key={r.id}>
                     <tr>
-                      <td style={s.td} colSpan={5}>
-                        <pre style={s.sql}>{r.sql.trim()}</pre>
+                      <td style={{ ...s.td, textAlign: 'center', color: dim }}>{i + 1}</td>
+                      <td style={{ ...s.td, fontWeight: 600, color: dim }}>{r.name}</td>
+                      <td style={{ ...s.td, color: dim }}>{r.criteria}</td>
+                      <td style={{ ...s.td, textAlign: 'center' }}>
+                        <button style={sqlBtn} onClick={() => setOpen(open === r.id ? null : r.id)} title="ดู SQL">
+                          <FileText size={14} />
+                        </button>
+                      </td>
+                      <td style={s.td}>
+                        <Toggle on={on} onChange={(v) => toggle(r.id, v)} />
                       </td>
                     </tr>
-                  )}
-                </Fragment>
-              )
-            })}
-          </tbody>
-        </table>
-      )}
-
-      {hits.map((h) => {
-        const cols = Object.keys(h.rows[0])
-        return (
-          <div key={h.id} style={{ marginBottom: 22 }}>
-            <p style={s.hitHead}>
-              <TriangleAlert size={16} /> {h.name} ({h.rows.length} รายการ)
-            </p>
-            <table style={{ ...s.table, marginBottom: 0 }}>
-              <thead>
-                <tr>
-                  {cols.map((c) => (
-                    <th key={c} style={s.th}>
-                      {HEAD[c] ?? c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {h.rows.map((row, i) => (
-                  <tr key={i}>
-                    {cols.map((c) => (
-                      <td key={c} style={s.td}>
-                        {cell(row[c])}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
-      })}
-    </div>
+                    {open === r.id && (
+                      <tr>
+                        <td style={s.td} colSpan={5}>
+                          <SqlBlock sql={r.sql.trim()} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+    </Modal>
   )
 }

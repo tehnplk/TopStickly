@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('bar', {
   setCollapsed: (collapsed) => ipcRenderer.send('set-collapsed', collapsed),
   setHover: (over) => ipcRenderer.send('hover', over),
+  drag: (dragging) => ipcRenderer.send('drag', dragging),
   openSettings: () => ipcRenderer.send('open-settings'),
   onPatient: (cb) => {
     const listener = (_e, patient) => cb(patient)
@@ -26,6 +27,8 @@ contextBridge.exposeInMainWorld('bar', {
   },
   installUpdate: () => ipcRenderer.send('install-update'),
   openRules: (group) => ipcRenderer.send('open-rules', group),
+  openHits: (group) => ipcRenderer.send('open-hits', group),
+  alertMenu: (x, y) => ipcRenderer.send('alert-menu', x, y),
   getAlerts: (group) => ipcRenderer.invoke('get-alerts', group),
   setRule: (group, id, on) => ipcRenderer.invoke('set-rule', group, id, on),
   fit: (height) => ipcRenderer.send('fit', height),

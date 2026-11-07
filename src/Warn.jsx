@@ -1,16 +1,12 @@
-import { useEffect, useRef } from 'react'
-import { FlaskConical, Pill, TriangleAlert, X } from 'lucide-react'
+import { Check, FlaskConical, Pill, TriangleAlert } from 'lucide-react'
 import { thaiDate } from './format.js'
+import Modal, { ModalButton } from './Modal.jsx'
 
 const AMBER = '#b45309'
 const s = {
-  // frameless window: the page is the drag handle, buttons opt out
-  page: { font: '14px system-ui', padding: '18px 22px', color: '#222', background: '#fff', minHeight: '100vh', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 6, border: `1px solid ${AMBER}`, WebkitAppRegion: 'drag', position: 'relative' },
-  close: { position: 'absolute', top: 0, right: 0, width: 40, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 0, background: 'none', color: '#555', cursor: 'pointer', WebkitAppRegion: 'no-drag' },
-  head: { display: 'flex', alignItems: 'center', gap: 10, color: AMBER, fontSize: 16, fontWeight: 700, margin: '0 0 4px', paddingRight: 28 },
-  item: { display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 10, marginBottom: 4, borderBottom: '1px solid #eee' },
+  rule: { display: 'flex', alignItems: 'center', gap: 4, color: AMBER, fontWeight: 700, margin: 0 },
+  item: { display: 'flex', flexDirection: 'column', gap: 3, paddingBottom: 8, marginBottom: 8, borderBottom: '1px solid #eee' },
   muted: { color: '#666' },
-  btn: { marginTop: 'auto', alignSelf: 'flex-end', padding: '8px 22px', font: 'inherit', borderRadius: 4, border: 0, background: AMBER, color: '#fff', cursor: 'pointer', WebkitAppRegion: 'no-drag' },
 }
 const GROUP = { rlu: ['RLU', FlaskConical], rdu: ['RDU', Pill] }
 
@@ -36,40 +32,40 @@ function Line({ r }) {
 export default function Warn() {
   const q = Object.fromEntries(new URLSearchParams(location.hash.split('?')[1]))
   const items = JSON.parse(q.items)
-  const page = useRef(null)
-  useEffect(() => {
-    const ro = new ResizeObserver(() => window.bar.fit(page.current.scrollHeight))
-    ro.observe(page.current)
-    return () => ro.disconnect()
-  }, [])
 
   return (
-    <div ref={page} style={s.page}>
-      <button className="close-btn" style={s.close} onClick={() => window.close()} title="ปิด" aria-label="ปิด">
-        <X size={18} />
-      </button>
+    <Modal
+      title={
+        <>
+          <TriangleAlert size={16} /> แจ้งเตือน
+        </>
+      }
+      color={AMBER}
+      border={AMBER}
+      extra={
+        <span style={s.muted}>
+          HN {q.hn} {q.patient}
+        </span>
+      }
+    >
       {items.map(({ group, rule, rows }) => {
         const [label, Icon] = GROUP[group]
         return (
           <div key={rule} style={s.item}>
-            <p style={s.head}>
-              <TriangleAlert size={22} /> {rule}
+            <p style={s.rule}>
+              <Icon size={13} /> {label} · {rule}
             </p>
-            <div style={{ ...s.muted, display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-              <Icon size={13} /> {label}
-            </div>
             {rows.map((r, i) => (
               <Line key={i} r={r} />
             ))}
           </div>
         )
       })}
-      <div style={s.muted}>
-        HN {q.hn} {q.patient}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <ModalButton icon={Check} color={AMBER} solid style={{ minWidth: 140 }} onClick={() => window.close()} autoFocus>
+          รับทราบ
+        </ModalButton>
       </div>
-      <button style={s.btn} onClick={() => window.close()} autoFocus>
-        รับทราบ
-      </button>
-    </div>
+    </Modal>
   )
 }
