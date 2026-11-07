@@ -50,17 +50,47 @@ async function getNcd(p, hn) {
   return out
 }
 
-// { name, ncd, vn, vstdate: '2025-11-06', vsttime: '09:12:20' } for the patient's latest visit.
+// { name, sex: 'หญิง', age: '45 ปี 2 เดือน 3 วัน', typeArea: '1-มีชื่อตามทบ.ในเขต และอยู่จริง', chronic: [{ name, status }], ncd,
+//   vn, vstdate: '2025-11-06', vsttime: '09:12:20', pttype: 'บัตรประกันสุขภาพถ้วนหน้า (UC)' } for the latest visit.
 // Fields are empty when not found or the DB is not configured / unreachable.
 export async function getPatient(hn) {
-  const empty = { name: '', ncd: {}, vn: '', vstdate: '', vsttime: '' }
+  const empty = { name: '', sex: '', age: '', typeArea: '', chronic: [], ncd: {}, vn: '', vstdate: '', vsttime: '', pttype: '' }
   try {
     const p = await getPool()
     if (!p) return empty
-    const [[pt]] = await p.query("SELECT CONCAT(COALESCE(pname,''), fname, ' ', lname) AS name FROM patient WHERE hn = ? LIMIT 1", [hn])
+    const [[pt]] = await p.query(
+      `SELECT CONCAT(COALESCE(pname,''), fname, ' ', lname) AS name,
+              CASE sex WHEN '1' THEN 'ชาย' WHEN '2' THEN 'หญิง' ELSE '' END AS sex,
+              CONCAT(TIMESTAMPDIFF(YEAR, birthday, CURDATE()), ' ปี ',
+                     TIMESTAMPDIFF(MONTH, birthday, CURDATE()) % 12, ' เดือน ',
+                     DATEDIFF(CURDATE(), birthday + INTERVAL TIMESTAMPDIFF(MONTH, birthday, CURDATE()) MONTH), ' วัน') AS age,
+              (SELECT t.house_regist_type_name FROM person pe
+                 JOIN house_regist_type t ON t.house_regist_type_id = pe.house_regist_type_id
+                WHERE pe.patient_hn = patient.hn LIMIT 1) AS typeArea
+         FROM patient WHERE hn = ? LIMIT 1`,
+      [hn]
+    )
     if (!pt) return empty
-    const [[v]] = await p.query('SELECT vn, vstdate, vsttime FROM ovst WHERE hn = ? ORDER BY vstdate DESC, vsttime DESC LIMIT 1', [hn])
-    return { ...empty, name: pt.name ?? '', ncd: await getNcd(p, hn), ...v }
+    const [[v]] = await p.query(
+      `SELECT o.vn, o.vstdate, o.vsttime, COALESCE(t.name, '') AS pttype
+         FROM ovst o LEFT JOIN pttype t ON t.pttype = o.pttype
+        WHERE o.hn = ? ORDER BY o.vstdate DESC, o.vsttime DESC LIMIT 1`,
+      [hn]
+    )
+    // โรคประจำตัว: the clinic registries (clinicmember) with their status, e.g. { name: 'โรคDM', status: 'ยังรักษาอยู่' }
+    const [chronic] = await p.query(
+      `SELECT c.name, COALESCE(s.clinic_member_status_name, '') AS status
+         FROM clinicmember cm
+         JOIN clinic c ON c.clinic = cm.clinic
+         LEFT JOIN clinic_member_status s ON s.clinic_member_status_id = cm.clinic_member_status_id
+        WHERE cm.hn = ?
+        ORDER BY cm.regdate`,
+      [hn]
+    )
+    return {
+      ...empty, name: pt.name ?? '', sex: pt.sex, age: pt.age ?? '', typeArea: pt.typeArea ?? '',
+      chronic, ncd: await getNcd(p, hn), ...v,
+    }
   } catch (e) {
     console.error('getPatient', e.message)
     return empty

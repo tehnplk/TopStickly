@@ -164,7 +164,7 @@ app.whenReady().then(() => {
   let patient = { hn: '' }
   // Rule hits for the current patient: group → [{ id, name, rows }]. Rules: electron/rules.js.
   // The warning itself is a modal: RDU pops up when a rule is hit, RLU when the flagged lab is ticked.
-  const noAlerts = () => ({ rlu: [], rdu: [], claim: [] })
+  const noAlerts = () => Object.fromEntries(Object.keys(GROUPS).map((g) => [g, []]))
   let alerts = noAlerts()
   let shown = new Set() // RDU rule ids already popped up for this patient
   const sendPatient = () => win.webContents.send('patient', patient)
@@ -233,7 +233,6 @@ app.whenReady().then(() => {
   startAutoUpdate((v) => win.webContents.send('update', (updateVersion = v)))
   ipcMain.on('install-update', installUpdate)
   const unhookClicks = watchClicks((click) => {
-    win.webContents.send('click', click)
     recheckSoon()
     // Ticking a lab checkbox, or picking a lab in a combobox: warn if an RLU rule already flagged that lab
     // for this patient. checked === null (state unreadable) still warns: a needless warning beats a missed one.
@@ -294,12 +293,15 @@ app.whenReady().then(() => {
   ipcMain.on('open-rules', (_e, group) => openRules(group))
   ipcMain.on('open-hits', (_e, group) => openRules(group, 'hits'))
   // ตั้งเตือน menu: native, since the 30px bar can't hold a dropdown. x, y = under the button.
+  // PPFS (services to offer) sits apart from the lab/drug warnings. Icons: the badges' lucide icons as PNG
+  // (electron/menu/, @2x picked up automatically), since native menus can't draw SVG.
+  const item = (g, label) => ({ label, icon: path.join(import.meta.dirname, 'menu', `${g}.png`), click: () => openRules(g) })
   ipcMain.on('alert-menu', (_e, x, y) =>
-    Menu.buildFromTemplate(Object.entries({ rlu: 'RLU', rdu: 'RDU', claim: 'Claim' }).map(([g, label]) => ({ label, click: () => openRules(g) }))).popup({ window: win, x, y }),
+    Menu.buildFromTemplate([item('rlu', 'RLU · Lab'), item('rdu', 'RDU · ยา'), { type: 'separator' }, item('ppfs', 'PPFS · บริการ PP')]).popup({ window: win, x, y }),
   )
   ipcMain.handle('get-alerts', (_e, group) => {
-    const { hn, name, vstdate, vsttime } = patient
-    return { patient: { hn, name, vstdate, vsttime }, group: GROUPS[group], hits: alerts[group], off: rulesOff() }
+    const { hn, name, sex, age, typeArea, pttype, chronic, vstdate, vsttime } = patient
+    return { patient: { hn, name, sex, age, typeArea, pttype, chronic, vstdate, vsttime }, group: GROUPS[group], hits: alerts[group], off: rulesOff() }
   })
   // เตือน/ไม่เตือน switch in the rules modal: re-check the current patient so the badge follows at once
   ipcMain.handle('set-rule', async (_e, group, id, on) => {

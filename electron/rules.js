@@ -42,13 +42,14 @@ const dx = (re) => `(EXISTS (SELECT 1 FROM ovstdiag WHERE hn = :hn AND icd10 REG
                     WHERE cm.hn = :hn AND c.icd10 REGEXP '${re}'))`
 const DM = '^E1[0-4]', HT = '^I1[0-5]', CKD = '^N18', LIPID = '^E78', PREDM = '^R73', HBV = '^(B16|B18[01]|Z225)', HCV = '^(B171|B182)'
 const age = (cond) => `(SELECT TIMESTAMPDIFF(YEAR, birthday, CURDATE()) FROM patient WHERE hn = :hn) ${cond}`
-// latest eGFR (lab "GFR"), optionally only from the last `days` days; NULL when there is none
-const gfr = (days) => `(SELECT o2.lab_order_result + 0 FROM lab_head h2
+// latest numeric result of a lab, optionally only from the last `days` days; NULL when there is none
+const labValue = (lab, days) => `(SELECT o2.lab_order_result + 0 FROM lab_head h2
           JOIN lab_order o2 ON o2.lab_order_number = h2.lab_order_number
           JOIN lab_items i2 ON i2.lab_items_code = o2.lab_items_code
-         WHERE h2.hn = :hn AND i2.lab_items_name = 'GFR' AND o2.lab_order_result <> ''${days ? `
+         WHERE h2.hn = :hn AND i2.lab_items_name = '${lab}' AND o2.lab_order_result <> ''${days ? `
            AND h2.order_date > CURDATE() - INTERVAL ${days} DAY` : ''}
          ORDER BY h2.order_date DESC LIMIT 1)`
+const gfr = (days) => labValue('GFR', days)
 const gfrNormal = `${gfr()} >= 60`
 const LIPIDS = ['Chol', 'TG', 'HDL', 'LDL-C (cal.)']
 
@@ -270,6 +271,138 @@ SELECT icd10 AS dx FROM ovstdiag
   },
 ]
 
+// PPFS: services the patient can get today and the fund pays for. Unlike RLU/RDU a hit is a chance, not a
+// warning: one row (basis, last_done) when the patient is in the target group and the service wasn't done
+// inside its window. Each "last" helper takes `since` (SQL date; '' = ever) and returns the latest date done.
+const after = (col, since) => (since ? ` AND ${col} > ${since}` : '')
+const ago = (days) => `CURDATE() - INTERVAL ${days} DAY`
+const labLast = (labs) => (since) => `(SELECT MAX(h.order_date) FROM lab_head h
+          JOIN lab_order o ON o.lab_order_number = h.lab_order_number
+          JOIN lab_items i ON i.lab_items_code = o.lab_items_code
+         WHERE h.hn = :hn AND i.lab_items_name IN (${labs.map((l) => `'${l}'`).join(', ')})${after('h.order_date', since)})`
+const ppLast = (re) => (since) => `(SELECT MAX(v.vstdate) FROM pp_special s
+          JOIN pp_special_type t ON t.pp_special_type_id = s.pp_special_type_id
+          JOIN ovst v ON v.vn = s.vn
+         WHERE v.hn = :hn AND t.pp_special_code REGEXP '${re}'${after('v.vstdate', since)})`
+const drugLast = (re) => (since) => `(SELECT MAX(o.vstdate) FROM opitemrece o JOIN drugitems d ON d.icode = o.icode
+         WHERE o.hn = :hn AND ${drug(re)}${after('o.vstdate', since)})`
+const xrayLast = (since) => `(SELECT MAX(x.request_date) FROM xray_report x
+          JOIN xray_items xi ON xi.xray_items_code = x.xray_items_code
+         WHERE x.hn = :hn AND xi.xray_items_name REGEXP 'CXR|Chest'${after('x.request_date', since)})`
+const latest = (...fs) => (since) =>
+  `NULLIF(GREATEST(${fs.map((f) => `COALESCE(${f(since)}, '1000-01-01')`).join(', ')}), '1000-01-01')`
+// due = SQL date the service must be done by (null = no limit): the end of the target age range and, for
+// "ปีละครั้ง" items, the end of the fiscal year (30 Sep), whichever comes first.
+const pp = (basis, last, since, due, ...where) => `
+SELECT ${basis} AS basis, COALESCE(${last('')}, 'ไม่เคย') AS last_done,
+       ${due ? `DATE_FORMAT(${due}, '%Y-%m-%d')` : "'ไม่จำกัด'"} AS due
+  FROM patient p
+ WHERE p.hn = :hn
+   AND ${last(since)} IS NULL${where.map((w) => `
+   AND ${w}`).join('')}`
+const AGE = 'TIMESTAMPDIFF(YEAR, p.birthday, CURDATE())'
+const MONTHS = 'TIMESTAMPDIFF(MONTH, p.birthday, CURDATE())'
+const ageText = `CONCAT(${AGE}, ' ปี')`
+const FY_END = "CAST(CONCAT(YEAR(CURDATE()) + (MONTH(CURDATE()) >= 10), '-09-30') AS DATE)"
+// last day the patient is still `n` years / months old
+const ageEnd = (n) => `p.birthday + INTERVAL ${n + 1} YEAR - INTERVAL 1 DAY`
+const monthsEnd = (n) => `p.birthday + INTERVAL ${n + 1} MONTH - INTERVAL 1 DAY`
+const yearly = (end) => `LEAST(${FY_END}, ${end})`
+const FEMALE = "p.sex = '2'"
+const BEFORE_2535 = "p.birthday < '1992-01-01'"
+const NOT_PREG = `NOT EXISTS (SELECT 1 FROM ovstdiag WHERE hn = :hn AND icd10 REGEXP '${PREG}' AND vstdate > ${ago(300)})`
+const HB = labLast(['Hb', 'Hct'])
+// TB high-risk groups this data can see (PPFS69 groups 4, 5): [condition, label]
+const TB_RISK = [
+  [`${AGE} >= 65 AND ${dx(`${DM}|^J44`)}`, 'อายุ ≥ 65 + DM/COPD'],
+  [`${dx(DM)} AND ${labValue('HbA1C', 365)} >= 7`, 'DM HbA1c ≥ 7'],
+  [dx(CKD), 'CKD'],
+  [dx('^(B2[0-4]|Z21)'), 'HIV'],
+]
+
+// PPFS items of สปสช. ปีงบ 2569 (PPFS69) that HOSxP data can decide. Left out: ANC/postpartum, pregnancy test,
+// contraception, fluoride varnish, oral-cancer biopsy, mammogram (family history), glasses, TB contacts.
+const PPFS = [
+  {
+    id: 'ppFit',
+    name: 'FIT คัดกรองมะเร็งลำไส้ใหญ่',
+    criteria: 'อายุ 50–70 ปี ทุก 2 ปี (PP code 1B006x หรือ Lab Occult blood) · 60 บาท',
+    sql: pp(ageText, latest(ppLast('^1B006'), labLast(['Occult blood'])), ago(730), ageEnd(70), `${AGE} BETWEEN 50 AND 70`),
+  },
+  {
+    id: 'ppCervix',
+    name: 'คัดกรองมะเร็งปากมดลูก',
+    criteria: 'หญิง 30–59 ปี ทุก 5 ปี (HPV DNA / Pap / VIA, PP code 1B004x) · HPV 280–370 บาท + เก็บตัวอย่าง 50',
+    sql: pp(ageText, latest(ppLast('^1B004'), labLast(['PAP Smear', 'HPV DNA Test'])), ago(1825), ageEnd(59), FEMALE, `${AGE} BETWEEN 30 AND 59`),
+  },
+  {
+    id: 'ppHbsag',
+    name: 'HBsAg คัดกรองไวรัสตับอักเสบบี',
+    criteria: 'เกิดก่อน พ.ศ. 2535 ตรวจครั้งเดียวในชีวิต ไม่มีประวัติไวรัสตับอักเสบบี · 50 บาท',
+    sql: pp("'เกิดก่อน 2535'", labLast(['HBsAg', 'HBsAg(ANC1)', 'HBsAg(ANC2)']), '', null, BEFORE_2535, `NOT ${dx(HBV)}`),
+  },
+  {
+    id: 'ppHcv',
+    name: 'Anti-HCV คัดกรองไวรัสตับอักเสบซี',
+    criteria: 'เกิดก่อน พ.ศ. 2535 ตรวจครั้งเดียวในชีวิต ไม่มีประวัติไวรัสตับอักเสบซี · 50 บาท',
+    sql: pp("'เกิดก่อน 2535'", labLast(['Anti -HCV']), '', null, BEFORE_2535, `NOT ${dx(HCV)}`),
+  },
+  {
+    id: 'ppFpg',
+    name: 'FPG คัดกรองเบาหวาน',
+    criteria: 'อายุ 35–59 ปีที่มีความเสี่ยง ไม่เคยรักษาเบาหวาน ปีละครั้ง · 40 บาท',
+    sql: pp(ageText, labLast(['FBS(Non DM)', 'FBS(DM)']), ago(365), yearly(ageEnd(59)), `${AGE} BETWEEN 35 AND 59`, `NOT ${dx(DM)}`),
+  },
+  {
+    id: 'ppLipid',
+    name: 'Total Cholesterol + HDL คัดกรองไขมัน',
+    criteria: 'อายุ 45–70 ปี ไม่เคยรักษาไขมันในเลือดสูง (E78) ทุก 5 ปี · 160 บาท',
+    sql: pp(ageText, labLast(['Chol', 'HDL']), ago(1825), ageEnd(70), `${AGE} BETWEEN 45 AND 70`, `NOT ${dx(LIPID)}`),
+  },
+  {
+    id: 'ppTbCxr',
+    name: 'CXR คัดกรองวัณโรคกลุ่มเสี่ยง',
+    criteria: 'อายุ ≥ 65 ที่มี DM/COPD, DM คุมไม่ได้ (HbA1c ≥ 7), CKD, HIV ปีละครั้ง · 100 บาท',
+    sql: pp(
+      `CONCAT_WS(', ', ${TB_RISK.map(([c, label]) => `IF(${c}, '${label}', NULL)`).join(', ')})`,
+      xrayLast,
+      ago(365),
+      FY_END,
+      `(${TB_RISK.map(([c]) => c).join(' OR ')})`,
+    ),
+  },
+  {
+    id: 'ppAnemiaTeen',
+    name: 'Hb/Hct คัดกรองโลหิตจาง หญิง 13–24 ปี',
+    criteria: 'หญิง 13–24 ปี ไม่ตั้งครรภ์ ปีละครั้ง · 65 บาท',
+    sql: pp(ageText, HB, ago(365), yearly(ageEnd(24)), FEMALE, `${AGE} BETWEEN 13 AND 24`, NOT_PREG),
+  },
+  {
+    id: 'ppIronFolic',
+    name: 'ยาเม็ดเสริมธาตุเหล็กและโฟลิก',
+    criteria: 'หญิง 13–45 ปี ไม่ตั้งครรภ์/หลังคลอด ปีละครั้ง · 80 บาท',
+    sql: pp(ageText, drugLast('FERR|FOLIC|TRIFERDINE|OBIMIN'), ago(365), yearly(ageEnd(45)), FEMALE, `${AGE} BETWEEN 13 AND 45`, NOT_PREG),
+  },
+  {
+    id: 'ppAnemiaInfant',
+    name: 'Hb/Hct คัดกรองโลหิตจาง เด็ก 6–12 เดือน',
+    criteria: 'อายุ 6–12 เดือน ครั้งเดียวในช่วงอายุ · 30 บาท',
+    sql: pp(`CONCAT(${MONTHS}, ' เดือน')`, HB, 'p.birthday + INTERVAL 6 MONTH', monthsEnd(12), `${MONTHS} BETWEEN 6 AND 12`),
+  },
+  {
+    id: 'ppAnemiaChild',
+    name: 'Hb/Hct คัดกรองโลหิตจาง เด็ก 3–5 ปี',
+    criteria: 'อายุ 3–5 ปี ครั้งเดียวในช่วงอายุ · 30 บาท',
+    sql: pp(ageText, HB, 'p.birthday + INTERVAL 3 YEAR', ageEnd(5), `${AGE} BETWEEN 3 AND 5`),
+  },
+  {
+    id: 'ppIronInfant',
+    name: 'ยาน้ำเสริมธาตุเหล็ก เด็ก 6–12 เดือน',
+    criteria: 'อายุ 6–12 เดือน ปีละครั้ง · 50 บาท',
+    sql: pp(`CONCAT(${MONTHS}, ' เดือน')`, drugLast('FERR|Iron Syrup'), ago(365), yearly(monthsEnd(12)), `${MONTHS} BETWEEN 6 AND 12`),
+  },
+]
+
 export const GROUPS = {
   rlu: {
     title: 'RLU · การใช้ Lab อย่างสมเหตุผล',
@@ -279,7 +412,10 @@ export const GROUPS = {
     title: 'RDU · การใช้ยาอย่างสมเหตุผล',
     rules: RDU,
   },
-  claim: { title: 'Claim · การเบิกจ่าย', rules: [] }, // placeholder: rules to come
+  ppfs: {
+    title: 'PPFS · บริการสร้างเสริมสุขภาพที่ให้ได้วันนี้',
+    rules: PPFS,
+  },
 }
 
 // { group: [{ id, name, rows }] } — only switched-on rules that returned rows. A failing rule is logged and skipped.

@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bell, ChevronUp, Download, FlaskConical, Pill, Receipt, Settings } from 'lucide-react'
+import { Bell, ChevronUp, Download, FlaskConical, Pill, Settings, ShieldPlus } from 'lucide-react'
 import MonkIcon from './MonkIcon.jsx'
-import { thaiDate } from './format.js'
 
 // userSelect none: the bar is a control strip (and dragged around), never selectable text. Modals still are.
 const bar = { height: '100vh', display: 'flex', alignItems: 'center', background: '#21252B', color: '#e8e8e8', font: '13px system-ui', userSelect: 'none' }
 const btn = { background: 'none', border: 0, color: 'inherit', font: 'inherit', cursor: 'pointer', padding: 0 }
 const badge = { padding: '2px 8px', borderRadius: 10, background: 'rgba(255,255,255,0.12)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }
-const actionStyle = { padding: '0 5px', borderRadius: 3, background: 'rgba(255,255,255,0.15)', fontSize: 11 }
 const ncdBadge = { ...badge, background: '#c62828', color: '#fff', fontWeight: 700, letterSpacing: 0.3, cursor: 'help' }
 // alert group badges: icon instead of the group name, then how many switched-on rules this patient meets
 const groupBadge = { ...badge, display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }
 const groupOff = { opacity: 0.45 }
 const groupHit = { background: '#b45309', color: '#fff', fontWeight: 700 }
+const ppHit = { background: '#2e7d32', color: '#fff', fontWeight: 700 }
+const divider = { width: 1, height: 16, background: 'rgba(255,255,255,0.25)' }
 const none = { hits: 0, on: 0 }
 const DRAG_PX = 4
 const labelBtn = { width: 'auto', padding: '0 10px', gap: 5, font: 'inherit' } // bar-btn with icon + text
@@ -20,12 +20,10 @@ const labelBtn = { width: 'auto', padding: '0 10px', gap: 5, font: 'inherit' } /
 export default function App() {
   const [collapsed, setCollapsed] = useState(false)
   const [patient, setPatient] = useState({ hn: '' })
-  const { hn, name, ncd, vstdate, vsttime } = patient
+  const { hn, name, ncd } = patient
   useEffect(() => window.bar.onPatient(setPatient), [])
-  const [count, setCount] = useState({ rlu: none, rdu: none, claim: none }) // group → { on, total }
+  const [count, setCount] = useState({ rlu: none, rdu: none, ppfs: none }) // group → { hits, on }
   useEffect(() => window.bar.onAlerts(setCount), [])
-  const [click, setClick] = useState(null) // last HOSxP action: { action, form, cls, caption, checked }
-  useEffect(() => window.bar.onClick(setClick), [])
   const [update, setUpdate] = useState('') // version downloaded and ready to install
   useEffect(() => window.bar.onUpdate(setUpdate), [])
   const drag = useRef(null) // { x, y, on } while the button is held
@@ -84,15 +82,9 @@ export default function App() {
               {Object.keys(ncd).join('/')}
             </span>
           )}
-          {vstdate && (
-            <span style={badge} title="Visit ล่าสุด">
-              {thaiDate(vstdate)} {vsttime.slice(0, 5)}
-            </span>
-          )}
           {[
             ['rlu', FlaskConical],
             ['rdu', Pill],
-            ['claim', Receipt],
           ].map(([key, Icon]) => {
             const { hits, on } = count[key]
             const tip = `${key.toUpperCase()}: เข้าข่าย ${hits} ข้อ จากกฎที่ตั้งเตือน ${on} ข้อ (คลิกเพื่อดู)`
@@ -102,18 +94,19 @@ export default function App() {
               </button>
             )
           })}
+          {/* PPFS = services to offer, not a warning: set apart, green */}
+          <span style={divider} />
+          <button
+            style={{ ...btn, ...groupBadge, ...(count.ppfs.hits ? ppHit : groupOff) }}
+            onClick={() => window.bar.openHits('ppfs')}
+            title={`PPFS: ให้บริการได้ ${count.ppfs.hits} รายการ จากที่ตั้งไว้ ${count.ppfs.on} รายการ (คลิกเพื่อดู)`}
+          >
+            <ShieldPlus size={14} /> PPFS {count.ppfs.hits}
+          </button>
         </span>
       )}
       {/* Windows order: app actions first, window control (minimize) at the far right */}
-      <span style={{ marginLeft: 'auto', marginRight: 8, fontSize: 12, opacity: 0.85, whiteSpace: 'nowrap' }} title="control ล่าสุดที่คลิกใน HOSxP">
-        {click && (
-          <>
-            <span style={{ opacity: 0.7 }}>{click.form} ›</span> <span style={actionStyle}>{click.action}</span> {click.cls}
-            {click.caption && <b> "{click.caption}"</b>}
-            {click.action === 'check' && click.checked !== null && (click.checked ? ' ☑' : ' ☐')}
-          </>
-        )}
-      </span>
+      <span style={{ marginLeft: 'auto' }} />
       <button
         className="bar-btn"
         style={labelBtn}
@@ -121,7 +114,7 @@ export default function App() {
           const r = e.currentTarget.getBoundingClientRect()
           window.bar.alertMenu(Math.round(r.left), Math.round(r.bottom))
         }}
-        title="ตั้งเตือน RLU / RDU / Claim"
+        title="ตั้งเตือน RLU / RDU / PPFS"
       >
         <Bell size={15} /> ตั้งเตือน
       </button>

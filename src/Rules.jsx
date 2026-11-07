@@ -89,7 +89,7 @@ export default function Rules() {
             <thead>
               <tr>
                 <th style={{ ...s.th, width: 36, textAlign: 'center' }}>ลำดับ</th>
-                <th style={{ ...s.th, width: 220 }}>เรื่องที่เตือน</th>
+                <th style={{ ...s.th, width: 220 }}>{key === 'ppfs' ? 'บริการ' : 'เรื่องที่เตือน'}</th>
                 <th style={s.th}>เงื่อนไข</th>
                 <th style={{ ...s.th, width: 30, textAlign: 'center' }}>SQL</th>
                 <th style={{ ...s.th, width: 38, textAlign: 'center' }} title="เตือน/ไม่เตือน">

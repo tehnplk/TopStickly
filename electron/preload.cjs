@@ -10,11 +10,6 @@ contextBridge.exposeInMainWorld('bar', {
     ipcRenderer.on('patient', listener)
     return () => ipcRenderer.off('patient', listener)
   },
-  onClick: (cb) => {
-    const listener = (_e, click) => cb(click)
-    ipcRenderer.on('click', listener)
-    return () => ipcRenderer.off('click', listener)
-  },
   onUpdate: (cb) => {
     const listener = (_e, version) => cb(version)
     ipcRenderer.on('update', listener)
