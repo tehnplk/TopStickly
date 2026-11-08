@@ -24,13 +24,14 @@ export function setRuleOn(id, on) {
 }
 
 // Labs are named differently at every site, so a lab matches by its name here OR by its standard code
-// (lab_items.provis_labcode, the 43-file LABTEST code). Codes as this PCU files them; HBsAg is left out on
-// purpose: its code (0741499) is shared with Anti-HBs, a different test. Labs with no code match by name only.
+// (lab_items.provis_labcode, the 43-file LABTEST code). Codes as this PCU files them. Left out on purpose, so
+// they match by name only: HBsAg (0741499 is shared with Anti-HBs, a different test) and VDRL (0721297 is shared
+// by the first-set VDRL and VDRL (ANC2), which ppAncLab2 must tell apart). Labs with no code match by name only.
 const LAB_CODE = {
   'HbA1C': '0531601', 'Cr.': '0581902', 'GFR': '0581904', 'Chol': '0541602', 'TG': '0546602', 'HDL': '0541202',
   'LDL-C (cal.)': '0541402', 'Alb./Cr.Ratio.(Level)': '0440204', 'Alb./Cr. Ratio(ค่า)': '0440206', 'Mic.Cr.urine': '0581903',
   'FBS(Non DM)': '0531002', 'FBS(DM)': '0531002', 'Anti -HCV': '0741699', 'Occult blood': '0583166', 'HPV DNA Test': '0744798',
-  'Hb': '0621401', 'Hct': '0621201', 'VDRL': '0721297', 'VDRL (ANC2)': '0721297', 'Blood group': '0680202',
+  'Hb': '0621401', 'Hct': '0621201', 'Blood group': '0680202',
 }
 const quote = (xs) => xs.map((x) => `'${x}'`).join(', ')
 const labIs = (i, labs) => {
@@ -57,13 +58,16 @@ const dx = (re) => `(EXISTS (SELECT 1 FROM ovstdiag WHERE hn = :hn AND icd10 REG
                     WHERE cm.hn = :hn AND c.icd10 REGEXP '${re}'))`
 const DM = '^E1[0-4]', HT = '^I1[0-5]', CKD = '^N18', LIPID = '^E78', PREDM = '^R73', HBV = '^(B16|B18[01]|Z225)', HCV = '^(B171|B182)'
 const age = (cond) => `(SELECT TIMESTAMPDIFF(YEAR, birthday, CURDATE()) FROM patient WHERE hn = :hn) ${cond}`
-// latest numeric result of a lab, optionally only from the last `days` days; NULL when there is none
-const labValue = (lab, days) => `(SELECT o2.lab_order_result + 0 FROM lab_head h2
+// Latest result of a lab as a number, optionally only from the last `days` days. NULL when there is none or the
+// latest is not a number ('ส่ง', 'Image'), never 0, so it cannot trip a "<= 30" rule. A bound counts as its
+// value ('>90' → 90, '<15' → 15) and a trailing note is dropped ('52.24[Stage=3A]' → 52.24).
+const labValue = (lab, days) => `(SELECT CASE WHEN t.r REGEXP '^ *[0-9]' THEN t.r + 0 END FROM (
+          SELECT REPLACE(REPLACE(REPLACE(o2.lab_order_result, '>', ''), '<', ''), '=', '') AS r FROM lab_head h2
           JOIN lab_order o2 ON o2.lab_order_number = h2.lab_order_number
           JOIN lab_items i2 ON i2.lab_items_code = o2.lab_items_code
          WHERE h2.hn = :hn AND ${labIs('i2', [lab])} AND o2.lab_order_result <> ''${days ? `
            AND h2.order_date > CURDATE() - INTERVAL ${days} DAY` : ''}
-         ORDER BY h2.order_date DESC LIMIT 1)`
+         ORDER BY h2.order_date DESC LIMIT 1) t)`
 const gfr = (days) => labValue('GFR', days)
 const gfrNormal = `${gfr()} >= 60`
 const LIPIDS = ['Chol', 'TG', 'HDL', 'LDL-C (cal.)']
