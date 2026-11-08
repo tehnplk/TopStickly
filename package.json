@@ -1,6 +1,6 @@
 {
   "name": "topstickly",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "electron/main.js",
@@ -18,12 +18,28 @@
   "build": {
     "appId": "com.tehnplk.topstickly",
     "productName": "TopStickly",
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "electron/**/*"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
     "asar": false,
-    "win": { "target": "nsis", "icon": "build/icon.png" },
-    "nsis": { "oneClick": true, "perMachine": false, "artifactName": "${productName}-Setup-${version}.${ext}" },
-    "publish": { "provider": "github", "owner": "tehnplk", "repo": "TopStickly" }
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "tehnplk",
+      "repo": "TopStickly"
+    }
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
