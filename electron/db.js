@@ -1,11 +1,37 @@
-// HOSxP MySQL connection settings, stored in userData with the password encrypted by the OS (DPAPI).
+// HOSxP database connection (MySQL or PostgreSQL), settings stored in userData with the password encrypted by
+// the OS (DPAPI). All SQL is written for MySQL; on PostgreSQL it is translated by toPg first.
 import { app, safeStorage } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import mysql from 'mysql2/promise'
+import pg from 'pg'
+import { toPg } from './pgsql.js'
 
 const file = () => path.join(app.getPath('userData'), 'db.json')
-const DEFAULTS = { host: '', port: 3306, user: '', password: '', database: 'hosxp' }
+export const PORTS = { mysql: 3306, pg: 5432 }
+const DEFAULTS = { type: 'mysql', host: '', port: PORTS.mysql, user: '', password: '', database: 'hosxp' }
+
+// dates as 'YYYY-MM-DD' strings like mysql2's dateStrings, not JS Dates
+for (const oid of [1082, 1114, 1184]) pg.types.setTypeParser(oid, (v) => v)
+
+// { query(sql, params) → rows, end() }. params: an object for :named, an array for ? placeholders.
+function connect({ type, host, port, user, password, database }) {
+  if (type === 'pg') {
+    const pool = new pg.Pool({ host, port: Number(port) || PORTS.pg, user, password, database, max: 2, connectionTimeoutMillis: 5000 })
+    return {
+      query: async (sql, params = []) => {
+        const { text, keys } = toPg(sql)
+        return (await pool.query(text, keys.map((k) => params[k] ?? null))).rows
+      },
+      end: () => pool.end(),
+    }
+  }
+  const pool = mysql.createPool({ host, port: Number(port) || PORTS.mysql, user, password, database, connectionLimit: 2, connectTimeout: 5000, dateStrings: true })
+  return {
+    query: async (sql, params = []) => (await pool.query(Array.isArray(params) ? sql : { sql, namedPlaceholders: true }, params))[0],
+    end: () => pool.end(),
+  }
+}
 
 export async function loadDbConfig() {
   try {
@@ -17,14 +43,14 @@ export async function loadDbConfig() {
   }
 }
 
-let pool = null
-async function getPool() {
-  if (!pool) {
+let db = null
+async function getDb() {
+  if (!db) {
     const cfg = await loadDbConfig()
     if (!cfg.host) return null
-    pool = mysql.createPool({ ...cfg, connectionLimit: 2, connectTimeout: 5000, dateStrings: true })
+    db = connect(cfg)
   }
-  return pool
+  return db
 }
 
 // Chronic conditions, each from the clinic registry and/or past diagnoses. ICD-10 is stored without
@@ -38,7 +64,7 @@ const NCD = {
 async function getNcd(p, hn) {
   const out = {}
   for (const [key, { re, clinic, diag }] of Object.entries(NCD)) {
-    const [[r]] = await p.query(
+    const [r] = await p.query(
       `SELECT EXISTS(SELECT 1 FROM ovstdiag WHERE hn = ? AND icd10 REGEXP ?) AS diag,
               EXISTS(SELECT 1 FROM clinicmember cm JOIN clinic c ON c.clinic = cm.clinic
                       WHERE cm.hn = ? AND c.icd10 REGEXP ?) AS clinic`,
@@ -56,9 +82,9 @@ async function getNcd(p, hn) {
 export async function getPatient(hn) {
   const empty = { name: '', sex: '', age: '', typeArea: '', chronic: [], ncd: {}, vn: '', vstdate: '', vsttime: '', pttype: '' }
   try {
-    const p = await getPool()
+    const p = await getDb()
     if (!p) return empty
-    const [[pt]] = await p.query(
+    const [pt] = await p.query(
       `SELECT CONCAT(COALESCE(pname,''), fname, ' ', lname) AS name,
               CASE sex WHEN '1' THEN 'ชาย' WHEN '2' THEN 'หญิง' ELSE '' END AS sex,
               CONCAT(TIMESTAMPDIFF(YEAR, birthday, CURDATE()), ' ปี ',
@@ -71,14 +97,14 @@ export async function getPatient(hn) {
       [hn]
     )
     if (!pt) return empty
-    const [[v]] = await p.query(
+    const [v] = await p.query(
       `SELECT o.vn, o.vstdate, o.vsttime, COALESCE(t.name, '') AS pttype
          FROM ovst o LEFT JOIN pttype t ON t.pttype = o.pttype
         WHERE o.hn = ? ORDER BY o.vstdate DESC, o.vsttime DESC LIMIT 1`,
       [hn]
     )
     // โรคประจำตัว: the clinic registries (clinicmember) with their status, e.g. { name: 'โรคDM', status: 'ยังรักษาอยู่' }
-    const [chronic] = await p.query(
+    const chronic = await p.query(
       `SELECT c.name, COALESCE(s.clinic_member_status_name, '') AS status
          FROM clinicmember cm
          JOIN clinic c ON c.clinic = cm.clinic
@@ -99,29 +125,27 @@ export async function getPatient(hn) {
 
 // A rule's SQL with :hn / :vn of the current patient.
 export async function runSql(sql, params) {
-  const p = await getPool()
-  if (!p) return []
-  const [rows] = await p.query({ sql, namedPlaceholders: true }, params)
-  return rows
+  const p = await getDb()
+  return p ? p.query(sql, params) : []
 }
 
 export async function saveDbConfig(cfg) {
-  pool?.end().catch(() => {})
-  pool = null // reconnect with the new settings on next query
+  db?.end().catch(() => {})
+  db = null // reconnect with the new settings on next query
   const password = cfg.password ? (await safeStorage.encryptStringAsync(cfg.password)).toString('base64') : ''
-  fs.writeFileSync(file(), JSON.stringify({ ...cfg, port: Number(cfg.port) || 3306, password }))
+  fs.writeFileSync(file(), JSON.stringify({ ...cfg, port: Number(cfg.port) || PORTS[cfg.type], password }))
 }
 
 export async function testDb(cfg) {
-  let conn
+  const conn = connect(cfg)
   try {
-    conn = await mysql.createConnection({ ...cfg, port: Number(cfg.port) || 3306, connectTimeout: 5000 })
+    await conn.query('SELECT 1')
     // opdconfig exists in every HOSxP database; confirms we hit the right schema
-    const [rows] = await conn.query('SELECT hospitalname FROM opdconfig LIMIT 1').catch(() => [[]])
+    const rows = await conn.query('SELECT hospitalname FROM opdconfig LIMIT 1').catch(() => [])
     return { ok: true, message: rows[0]?.hospitalname ? `เชื่อมต่อสำเร็จ: ${rows[0].hospitalname}` : 'เชื่อมต่อสำเร็จ (ไม่พบตาราง opdconfig)' }
   } catch (e) {
     return { ok: false, message: e.message }
   } finally {
-    await conn?.end().catch(() => {})
+    await conn.end().catch(() => {})
   }
 }

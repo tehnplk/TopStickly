@@ -208,7 +208,7 @@ const RDU = [
     name: 'HT ได้ RAS blockade 2 ชนิดร่วมกัน',
     criteria: 'Dx visit นี้ I10 และได้ยา 2 กลุ่มขึ้นไปใน ACEI (-pril), ARB (-sartan), aliskiren (ยกเว้น captopril stat dose)',
     ref: 'เป้า 0%',
-    sql: drugsIn(drug('PRIL|SARTAN|ALISKIREN'), visitDx('^I10'), `(${visitDrug('PRIL')} + ${visitDrug('SARTAN')} + ${visitDrug('ALISKIREN')}) >= 2`),
+    sql: drugsIn(drug('PRIL|SARTAN|ALISKIREN'), visitDx('^I10'), `(${['PRIL', 'SARTAN', 'ALISKIREN'].map((g) => `IF(${visitDrug(g)}, 1, 0)`).join(' + ')}) >= 2`),
   },
   {
     id: 'ckdNsaid',
@@ -304,7 +304,7 @@ SELECT ${basis} AS basis, COALESCE(${last('')}, 'ไม่เคย') AS last_do
 const AGE = 'TIMESTAMPDIFF(YEAR, p.birthday, CURDATE())'
 const MONTHS = 'TIMESTAMPDIFF(MONTH, p.birthday, CURDATE())'
 const ageText = `CONCAT(${AGE}, ' ปี')`
-const FY_END = "CAST(CONCAT(YEAR(CURDATE()) + (MONTH(CURDATE()) >= 10), '-09-30') AS DATE)"
+const FY_END = "CAST(CONCAT(YEAR(CURDATE()) + IF(MONTH(CURDATE()) >= 10, 1, 0), '-09-30') AS DATE)"
 const FY_EVE = `${FY_END} - INTERVAL 1 YEAR` // 30 Sep before this fiscal year: after() counts dates > it
 // last day the patient is still `n` years / months old
 const ageEnd = (n) => `p.birthday + INTERVAL ${n + 1} YEAR - INTERVAL 1 DAY`
@@ -334,7 +334,8 @@ const ANC_ID = ancOf(`a.anc_register_date BETWEEN CURDATE() - INTERVAL 10 MONTH 
 const PNC_ID = ancOf('a.labor_date BETWEEN CURDATE() - INTERVAL 42 DAY AND CURDATE()') // delivered ≤ 42 days ago
 const ancCol = (id, expr) => `(SELECT ${expr} FROM person_anc a WHERE a.person_anc_id = ${id})`
 const GA_WEEKS = 'FLOOR(DATEDIFF(CURDATE(), COALESCE(a.lmp, a.edc - INTERVAL 280 DAY)) / 7)'
-const GA = `COALESCE(${ancCol(ANC_ID, `IF(${GA_WEEKS} BETWEEN 0 AND 45, ${GA_WEEKS}, NULL)`)}, '?')` // '?' = no sane lmp/edc
+const GA_N = ancCol(ANC_ID, `IF(${GA_WEEKS} BETWEEN 0 AND 45, ${GA_WEEKS}, NULL)`) // NULL = no sane lmp/edc
+const GA = `COALESCE(${GA_N}, '?')`
 const EDC = ancCol(ANC_ID, 'IF(a.edc < CURDATE() + INTERVAL 10 MONTH, a.edc, NULL)')
 const REG = ancCol(ANC_ID, 'a.anc_register_date')
 const ancLabSql = (ids) => `FROM person_anc_service s JOIN person_anc_lab l ON l.person_anc_service_id = s.person_anc_service_id
@@ -380,7 +381,7 @@ const ANC = [
     id: 'ppAncLab2',
     name: 'ฝากครรภ์: Lab ชุดที่สอง (ใกล้คลอด)',
     criteria: 'หญิงตั้งครรภ์ GA ≥ 28 สัปดาห์ · VDRL และ HIV ครั้งที่ 2 · 190 บาท/การตั้งครรภ์',
-    sql: ancSet(LAB2, EDC, `${GA} >= 28`),
+    sql: ancSet(LAB2, EDC, `${GA_N} >= 28`),
   },
   {
     id: 'ppAncHusband',

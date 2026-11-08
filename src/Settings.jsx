@@ -3,6 +3,7 @@ import { PlugZap, Save } from 'lucide-react'
 import Modal, { ModalButton } from './Modal.jsx'
 
 const GREEN = '#2e7d32'
+const PORTS = { mysql: '3306', pg: '5432' }
 
 const s = {
   grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 10px' },
@@ -21,13 +22,17 @@ export default function Settings() {
   }, [])
 
   if (!cfg) return null
+  const edit = (next) => (setCfg(next), setStatus(null)) // a test result is about the settings it ran with
 
   const field = (key, label, type = 'text', span = 1) => (
     <label style={{ ...s.label, gridColumn: `span ${span}` }}>
       {label}
-      <input style={s.input} type={type} value={cfg[key]} onChange={(e) => setCfg({ ...cfg, [key]: e.target.value })} />
+      <input style={s.input} type={type} value={cfg[key]} onChange={(e) => edit({ ...cfg, [key]: e.target.value })} />
     </label>
   )
+
+  // switching type moves the port along when it is still the other type's default
+  const setType = (type) => edit({ ...cfg, type, port: Object.values(PORTS).includes(String(cfg.port)) ? PORTS[type] : cfg.port })
 
   const run = async (fn) => {
     setBusy(true)
@@ -46,7 +51,14 @@ export default function Settings() {
     })
 
   return (
-    <Modal title="เชื่อมต่อ MySQL HOSxP" color={GREEN}>
+    <Modal title="เชื่อมต่อฐานข้อมูล HOSxP" color={GREEN}>
+      <label style={{ ...s.label, marginBottom: 8 }}>
+        ฐานข้อมูล
+        <select style={s.input} value={cfg.type} onChange={(e) => setType(e.target.value)}>
+          <option value="mysql">MySQL / MariaDB</option>
+          <option value="pg">PostgreSQL</option>
+        </select>
+      </label>
       <div style={{ ...s.grid, gridTemplateColumns: '3fr 1fr' }}>
         {field('host', 'Host')}
         {field('port', 'Port', 'number')}

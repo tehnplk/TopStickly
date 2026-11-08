@@ -12,7 +12,7 @@
 | Desktop shell | Electron 45 | main process เป็น ESM (`"type": "module"`), preload เป็น CJS ([electron/preload.cjs](electron/preload.cjs)) |
 | UI | React 19 + Vite 8 (`@vitejs/plugin-react`) | inline style ล้วน ไม่มี CSS framework; ไอคอน `lucide-react` |
 | Win32 FFI | koffi 3 | `user32`: EnumWindows, SendMessageTimeoutW (WM_GETTEXT), SetWindowPos, low-level mouse hook (`SetWindowsHookEx` ใน worker thread); `shell32`: SHAppBarMessage จองพื้นที่จอ |
-| ฐานข้อมูล | mysql2 3 (promise pool) → MySQL/MariaDB ของ HOSxP | อ่านอย่างเดียว; กฎเป็น SQL ดิบพร้อม named param `:hn` `:vn` `:icode` |
+| ฐานข้อมูล | mysql2 3 → MySQL/MariaDB (ค่าเริ่มต้น) หรือ pg 8 → PostgreSQL ของ HOSxP เลือกในหน้าตั้งค่า | อ่านอย่างเดียว; SQL ทั้งหมดเขียนเป็น MySQL พร้อม named param `:hn` `:vn` `:icode` — ถ้าเป็น PG แปลงด้วย [electron/pgsql.js](electron/pgsql.js) ก่อนรัน |
 | เก็บความลับ | Electron `safeStorage` (DPAPI) | รหัสผ่าน DB เข้ารหัสใน userData |
 | แพ็กเกจ/อัปเดต | electron-builder 26 (NSIS one-click, `asar: false`) + electron-updater 6 | อัปเดตจาก GitHub Releases |
 | แอปเป้าหมาย | HOSxP (Delphi + DevExpress) | อ่านหน้าจอผ่าน window handle ไม่มี API ทางการ |
@@ -57,7 +57,7 @@ MySQL ของ HOSxP  ◀──SELECT ×N───   ③ checkRules({ hn, vn })
 
 ### สายคิวรี (ทั้งหมดที่ codebase มี)
 
-คิวรีทุกตัวผ่าน mysql2 pool เดียวใน [electron/db.js](electron/db.js) (ยกเว้นสาย E) กฎรันทีละข้อตามลำดับ (`await` ในลูป) ไม่ขนาน; กฎที่ error จะ log แล้วข้าม ไม่ล้มทั้งรอบ
+คิวรีทุกตัวผ่าน connection เดียวใน [electron/db.js](electron/db.js) (`connect()` เลือก mysql2 หรือ pg ตาม `type`; ยกเว้นสาย E) กฎรันทีละข้อตามลำดับ (`await` ในลูป) ไม่ขนาน; กฎที่ error จะ log แล้วข้าม ไม่ล้มทั้งรอบ
 
 | สาย | ทริกเกอร์ | เรียกอะไร | จำนวนคิวรี | ผลลัพธ์ |
 |---|---|---|---|---|
@@ -89,6 +89,8 @@ MySQL ของ HOSxP  ◀──SELECT ×N───   ③ checkRules({ hn, vn })
 ```
 ดูกฎที่มีอยู่เป็นตัวอย่าง และ helper (`labLast`, `drug`, `pp`, `ppLast`, ...) ในไฟล์เดียวกัน ทดสอบ SQL กับ DB จริงก่อนใส่
 
+เขียน SQL เป็น MySQL เสมอ — ถ้าใช้ฟังก์ชัน MySQL ที่ [electron/pgsql.js](electron/pgsql.js) ยังไม่รู้จัก ต้องเพิ่มใน `FUNCS` และเพิ่มกรณีใน `node electron/pgsql.check.mjs` ด้วย ข้อห้ามที่ PG รับไม่ได้: บวกค่า boolean เป็นตัวเลข (ใช้ `IF(cond, 1, 0)`), เทียบ text กับตัวเลข, ค่าวันที่เป็น string ลอยๆ บวก INTERVAL (ใช้คอลัมน์หรือ `DATE '...'`)
+
 ## แผนที่โค้ด
 
 | ไฟล์ | หน้าที่ |
@@ -98,7 +100,8 @@ MySQL ของ HOSxP  ◀──SELECT ×N───   ③ checkRules({ hn, vn })
 | [electron/mousehook.js](electron/mousehook.js) | mouse hook (worker); กลืนคลิกตอน Spy |
 | [electron/appbar.js](electron/appbar.js) | dock/undock แถบ ขนาดจริง = `BAR_HEIGHT × display scale` |
 | [electron/rules.js](electron/rules.js) | กฎทั้งหมด + แหล่งอ้างอิงของแต่ละกลุ่มในคอมเมนต์ |
-| [electron/db.js](electron/db.js) | pool, ข้อมูลคนไข้, NCD, config |
+| [electron/db.js](electron/db.js) | connection (MySQL หรือ PG), ข้อมูลคนไข้, NCD, config |
+| [electron/pgsql.js](electron/pgsql.js) | แปลง SQL MySQL → PostgreSQL (`toPg`) เฉพาะ construct ที่ codebase ใช้; ตรวจด้วย `node electron/pgsql.check.mjs` |
 | [src/main.jsx](src/main.jsx) | route ตาม `location.hash`: settings / rules / hits / warn / spy / (แถบ) |
 | [src/App.jsx](src/App.jsx) | ตัวแถบ |
 | [src/Hits.jsx](src/Hits.jsx) · [Rules.jsx](src/Rules.jsx) · [Warn.jsx](src/Warn.jsx) · [Spy.jsx](src/Spy.jsx) · [Settings.jsx](src/Settings.jsx) | modal ทั้งหมด ใช้ [src/Modal.jsx](src/Modal.jsx) ร่วมกัน |
@@ -113,6 +116,7 @@ MySQL ของ HOSxP  ◀──SELECT ×N───   ③ checkRules({ hn, vn })
 - `readHn` ใช้ ~0.4 ms/ครั้ง — poll ทุก 1 วิไม่กระทบ CPU
 - ทดสอบได้แค่ DB ของ PCU (Turbo_HOSxP_PCU) **แต่แอปจะใช้ที่ รพ. ด้วย** กฎ lab/xray/ยาตอนนี้จับด้วยชื่อตามที่ PCU นี้ตั้ง → ที่ รพ. อาจเตือนผิด
 - modal ใช้ฟอนต์ 2 ขนาด: header 13px, content 11px (ป้ายราคา PPFS/PPB 13px)
+- **PostgreSQL ยังไม่เคยรันกับ HOSxP-PG ที่มีข้อมูลจริง** — พิสูจน์แล้ว 3 ทาง (2026-11-08): กฎทุกข้อรันผ่านบน schema HOSxP ที่สร้างใน PG (คอลัมน์ตาม MySQL, ไม่มีข้อมูล), ฟังก์ชันที่แปลงให้ค่าตรงกับ MySQL บนค่าทดสอบ 41 กรณี, และฝั่ง MySQL ผลเหมือนเดิมทุกแถว ข้อต่างที่ยังเหลือ: PG เทียบ string แบบตัวพิมพ์เล็ก/ใหญ่ต่างกัน (`IN ('HbA1C')`) ส่วน MySQL ไม่สน; `CURDATE()` บน PG ใช้ timezone ของ server/session
 
 ## งานค้าง
 

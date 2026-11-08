@@ -331,9 +331,10 @@ app.whenReady().then(() => {
       item('ppb', 'PPB · ผลงานพื้นฐาน'),
     ]).popup({ window: win, x, y }),
   )
-  ipcMain.handle('get-alerts', (_e, group) => {
+  ipcMain.handle('get-alerts', async (_e, group) => {
     const { hn, name, sex, age, typeArea, pttype, chronic, vstdate, vsttime } = patient
-    return { patient: { hn, name, sex, age, typeArea, pttype, chronic, vstdate, vsttime }, group: GROUPS[group], hits: alerts[group], off: rulesOff() }
+    const dbType = (await loadDbConfig()).type // the rules modal opens the SQL tab of the engine in use
+    return { patient: { hn, name, sex, age, typeArea, pttype, chronic, vstdate, vsttime }, group: GROUPS[group], hits: alerts[group], off: rulesOff(), dbType }
   })
   // เตือน/ไม่เตือน switch in the rules modal: re-check the current patient so the alert button follows at once
   ipcMain.handle('set-rule', async (_e, group, id, on) => {

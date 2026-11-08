@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { Bell, BellOff, Check, Copy, FileText, Search } from 'lucide-react'
 import Modal, { tbl as s } from './Modal.jsx'
+import { toPg } from '../electron/pgsql.js'
 
 const AMBER = '#b45309'
 const sqlBtn = { border: 0, background: 'none', padding: 2, cursor: 'pointer', color: '#555', display: 'flex', margin: '0 auto' }
@@ -9,9 +10,20 @@ const searchInput = { border: 0, outline: 'none', font: 'inherit', padding: '3px
 const copyBtn = { position: 'absolute', top: 4, right: 4, width: 24, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #444', borderRadius: 4, background: '#2d2d2d', color: '#ccc', cursor: 'pointer' }
 const sqlPre = { margin: 0, padding: '8px 36px 8px 10px', background: '#1e1e1e', color: '#d4d4d4', font: '11px/1.4 Consolas, monospace', whiteSpace: 'pre-wrap', borderRadius: 4 }
 
-// SQL text with a copy icon in its corner; the icon turns into a tick for a moment once copied
-function SqlBlock({ sql }) {
+const tabBtn = (on) => ({ padding: '3px 12px', font: 'inherit', fontSize: 11, cursor: 'pointer', border: '1px solid #444', borderBottom: 0, borderRadius: '4px 4px 0 0', background: on ? '#1e1e1e' : '#f0f0f0', color: on ? '#fff' : '#555' })
+// the PG text as it runs, with $n placeholders shown by name like the MySQL tab (:hn, :vn)
+const pgText = (sql) => {
+  const { text, keys } = toPg(sql)
+  return text.replace(/\$(\d+)::text/g, (_, n) => `:${keys[n - 1]}`)
+}
+const DIALECTS = { mysql: ['MySQL', (sql) => sql], pg: ['PostgreSQL', pgText] }
+
+// SQL text in MySQL / PostgreSQL tabs (the active connection's first), with a copy icon in its corner;
+// the icon turns into a tick for a moment once copied
+function SqlBlock({ sql: mysql, dbType }) {
+  const [tab, setTab] = useState(dbType === 'pg' ? 'pg' : 'mysql')
   const [copied, setCopied] = useState(false)
+  const sql = DIALECTS[tab][1](mysql)
   const copy = async () => {
     await navigator.clipboard.writeText(sql)
     setCopied(true)
@@ -20,8 +32,16 @@ function SqlBlock({ sql }) {
   const Icon = copied ? Check : Copy
   return (
     <div style={{ position: 'relative' }}>
-      <pre style={sqlPre}>{sql}</pre>
-      <button style={copyBtn} onClick={copy} title={copied ? 'คัดลอกแล้ว' : 'คัดลอก SQL'} aria-label="คัดลอก SQL">
+      <div role="tablist" style={{ display: 'flex', gap: 2 }}>
+        {Object.entries(DIALECTS).map(([k, [label]]) => (
+          <button key={k} role="tab" aria-selected={tab === k} style={tabBtn(tab === k)} onClick={() => setTab(k)} title={k === dbType ? 'ฐานข้อมูลที่เชื่อมต่ออยู่' : undefined}>
+            {label}
+            {k === dbType && ' ●'}
+          </button>
+        ))}
+      </div>
+      <pre style={{ ...sqlPre, borderTopLeftRadius: 0 }}>{sql}</pre>
+      <button style={{ ...copyBtn, top: 26 }} onClick={copy} title={copied ? 'คัดลอกแล้ว' : 'คัดลอก SQL'} aria-label="คัดลอก SQL">
         <Icon size={13} color={copied ? '#4caf50' : undefined} />
       </button>
     </div>
@@ -131,7 +151,7 @@ export default function Rules() {
                     {open === r.id && (
                       <tr>
                         <td style={s.td} colSpan={5}>
-                          <SqlBlock sql={r.sql.trim()} />
+                          <SqlBlock sql={r.sql.trim()} dbType={data.dbType} />
                         </td>
                       </tr>
                     )}

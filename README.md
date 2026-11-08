@@ -19,7 +19,7 @@
 | Desktop shell | Electron 45 (main process เป็น ESM) |
 | UI | React 19 + Vite 8, ไอคอน lucide-react, inline style |
 | อ่านหน้าจอ HOSxP | koffi (Win32 FFI) — `user32` / `shell32` |
-| ฐานข้อมูล | mysql2 → MySQL/MariaDB ของ HOSxP (อ่านอย่างเดียว) |
+| ฐานข้อมูล | HOSxP บน MySQL/MariaDB (mysql2, ค่าเริ่มต้น) หรือ PostgreSQL (pg) — อ่านอย่างเดียว |
 | เก็บรหัสผ่าน DB | Electron `safeStorage` (DPAPI) |
 | แพ็กเกจ / อัปเดต | electron-builder (NSIS) + electron-updater (GitHub Releases) |
 
