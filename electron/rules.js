@@ -23,8 +23,22 @@ export function setRuleOn(id, on) {
   fs.writeFileSync(offFile(), JSON.stringify([...off]))
 }
 
-// Orders of these labs (lab_items_name, as named at this hospital) within the last `days` days
-// (null = ever), filtered by extra `AND ...` conditions on the patient.
+// Labs are named differently at every site, so a lab matches by its name here OR by its standard code
+// (lab_items.provis_labcode, the 43-file LABTEST code). Codes as this PCU files them; HBsAg is left out on
+// purpose: its code (0741499) is shared with Anti-HBs, a different test. Labs with no code match by name only.
+const LAB_CODE = {
+  'HbA1C': '0531601', 'Cr.': '0581902', 'GFR': '0581904', 'Chol': '0541602', 'TG': '0546602', 'HDL': '0541202',
+  'LDL-C (cal.)': '0541402', 'Alb./Cr.Ratio.(Level)': '0440204', 'Alb./Cr. Ratio(ค่า)': '0440206', 'Mic.Cr.urine': '0581903',
+  'FBS(Non DM)': '0531002', 'FBS(DM)': '0531002', 'Anti -HCV': '0741699', 'Occult blood': '0583166', 'HPV DNA Test': '0744798',
+  'Hb': '0621401', 'Hct': '0621201', 'VDRL': '0721297', 'VDRL (ANC2)': '0721297', 'Blood group': '0680202',
+}
+const quote = (xs) => xs.map((x) => `'${x}'`).join(', ')
+const labIs = (i, labs) => {
+  const codes = [...new Set(labs.map((l) => LAB_CODE[l]).filter(Boolean))]
+  return `(${i}.lab_items_name IN (${quote(labs)})${codes.length ? ` OR ${i}.provis_labcode IN (${quote(codes)})` : ''})`
+}
+
+// Orders of these labs within the last `days` days (null = ever), filtered by extra `AND ...` conditions on the patient.
 const labWithin = (labs, days, ...where) => `
 SELECT i.lab_items_name AS lab, h.order_date, h.order_time,
        DATEDIFF(CURDATE(), h.order_date) AS days_ago, o.lab_order_result AS result
@@ -32,7 +46,7 @@ SELECT i.lab_items_name AS lab, h.order_date, h.order_time,
   JOIN lab_order o ON o.lab_order_number = h.lab_order_number
   JOIN lab_items i ON i.lab_items_code = o.lab_items_code
  WHERE h.hn = :hn
-   AND i.lab_items_name IN (${labs.map((l) => `'${l}'`).join(', ')})${days ? `
+   AND ${labIs('i', labs)}${days ? `
    AND h.order_date > CURDATE() - INTERVAL ${days} DAY` : ''}${where.map((w) => `
    AND ${w}`).join('')}
  ORDER BY h.order_date DESC, h.order_time DESC`
@@ -47,7 +61,7 @@ const age = (cond) => `(SELECT TIMESTAMPDIFF(YEAR, birthday, CURDATE()) FROM pat
 const labValue = (lab, days) => `(SELECT o2.lab_order_result + 0 FROM lab_head h2
           JOIN lab_order o2 ON o2.lab_order_number = h2.lab_order_number
           JOIN lab_items i2 ON i2.lab_items_code = o2.lab_items_code
-         WHERE h2.hn = :hn AND i2.lab_items_name = '${lab}' AND o2.lab_order_result <> ''${days ? `
+         WHERE h2.hn = :hn AND ${labIs('i2', [lab])} AND o2.lab_order_result <> ''${days ? `
            AND h2.order_date > CURDATE() - INTERVAL ${days} DAY` : ''}
          ORDER BY h2.order_date DESC LIMIT 1)`
 const gfr = (days) => labValue('GFR', days)
@@ -280,7 +294,7 @@ const ago = (days) => `CURDATE() - INTERVAL ${days} DAY`
 const labLast = (labs) => (since) => `(SELECT MAX(h.order_date) FROM lab_head h
           JOIN lab_order o ON o.lab_order_number = h.lab_order_number
           JOIN lab_items i ON i.lab_items_code = o.lab_items_code
-         WHERE h.hn = :hn AND i.lab_items_name IN (${labs.map((l) => `'${l}'`).join(', ')})${after('h.order_date', since)})`
+         WHERE h.hn = :hn AND ${labIs('i', labs)}${after('h.order_date', since)})`
 const ppLast = (re) => (since) => `(SELECT MAX(v.vstdate) FROM pp_special s
           JOIN pp_special_type t ON t.pp_special_type_id = s.pp_special_type_id
           JOIN ovst v ON v.vn = s.vn
