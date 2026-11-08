@@ -119,6 +119,12 @@ app.whenReady().then(() => {
   }
 
   ipcMain.on('set-collapsed', (_e, c) => (c ? collapse() : expand()))
+  // Launched again while running: bring the bar back instead of doing nothing.
+  app.on('second-instance', () => {
+    if (!collapsed) return
+    expand()
+    win.webContents.send('collapsed', false)
+  })
   ipcMain.on('hover', (_e, over) => {
     // skip mid-animation so the collapse's undock callback isn't cancelled
     if (collapsed && !timer) animate({ ...target }, over ? HOVER_OPACITY : COLLAPSED_OPACITY)

@@ -25,6 +25,7 @@ const appName = { marginLeft: 12, color: '#e0a54a', fontSize: 11, whiteSpace: 'n
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false)
+  useEffect(() => window.bar.onCollapsed(setCollapsed), []) // main expands the bar on a second launch
   const [patient, setPatient] = useState({ hn: '' })
   const { hn, name, ncd } = patient
   useEffect(() => window.bar.onPatient(setPatient), [])

@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('bar', {
     ipcRenderer.on('spying', listener)
     return () => ipcRenderer.off('spying', listener)
   },
+  onCollapsed: (cb) => {
+    const listener = (_e, c) => cb(c)
+    ipcRenderer.on('collapsed', listener)
+    return () => ipcRenderer.off('collapsed', listener)
+  },
   spy: () => ipcRenderer.send('spy'),
   installUpdate: () => ipcRenderer.send('install-update'),
   openRules: (group) => ipcRenderer.send('open-rules', group),
