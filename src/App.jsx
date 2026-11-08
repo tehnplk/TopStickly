@@ -11,8 +11,11 @@ const ncdBadge = { ...badge, background: '#c62828', color: '#fff', fontWeight: 7
 const groupBadge = { ...badge, display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }
 const groupOff = { opacity: 0.45 }
 const groupHit = { background: '#b45309', color: '#fff', fontWeight: 700 }
-const ppHit = { background: '#2e7d32', color: '#fff', fontWeight: 700 }
-const ppbHit = { background: '#2a5f9e', color: '#fff', fontWeight: 700 }
+// Something to claim: flash 3 times when the count turns non-zero (on each new patient, as main resets the
+// count to 0 first). Same animation value on later rechecks = no replay.
+const blink = { animation: 'badge-blink 1.2s ease-in-out 3' }
+const ppHit = { background: '#2e7d32', color: '#fff', fontWeight: 700, ...blink }
+const ppbHit = { background: '#2a5f9e', color: '#fff', fontWeight: 700, ...blink }
 const divider = { width: 1, height: 16, background: 'rgba(255,255,255,0.25)' }
 const none = { hits: 0, on: 0 }
 const DRAG_PX = 4
@@ -88,6 +91,8 @@ export default function App() {
               {Object.keys(ncd).join('/')}
             </span>
           )}
+          {/* patient info | alert groups */}
+          <span style={divider} />
           {[
             ['rlu', FlaskConical],
             ['rdu', Pill],

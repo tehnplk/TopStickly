@@ -8,6 +8,8 @@
       .bar-btn { width: 40px; height: 100%; display: flex; align-items: center; justify-content: center; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; }
       .bar-btn:hover { background: rgba(255, 255, 255, 0.15); }
       .bar-btn:active { background: rgba(255, 255, 255, 0.25); }
+      /* PPFS / PPB badge when the patient has something to claim: 3 flashes (src/App.jsx) */
+      @keyframes badge-blink { 50% { opacity: 0.2; box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.5); } }
       .close-btn:hover { background: #e81123 !important; color: #fff !important; }
     </style>
   </head>
