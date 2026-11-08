@@ -80,3 +80,9 @@ npm run dist    # สร้าง installer ใน release/
 ### ออก release (เจ้าของ repo)
 
 แก้ `version` ใน `package.json` → `npm run dist` → สร้าง GitHub Release แท็ก `v<version>` แล้วอัป `release/TopStickly-Setup-<version>.exe`, `.exe.blockmap` และ `release/latest.yml` แอปที่ติดตั้งแล้วจะดาวน์โหลดเอง
+
+## License
+
+Open source ภายใต้ [MIT License](LICENSE) — ใช้ แก้ไข แจกจ่าย และพัฒนาต่อได้อิสระ รวมถึงเชิงการค้า โดยต้องคงข้อความลิขสิทธิ์และสัญญาอนุญาตไว้ในสำเนา ซอฟต์แวร์ให้มาตามสภาพ ไม่มีการรับประกัน
+
+Copyright (c) 2026 tehnplk
