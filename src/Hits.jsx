@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { ShieldPlus, TriangleAlert } from 'lucide-react'
+import { ClipboardList, ShieldPlus, TriangleAlert } from 'lucide-react'
 import { thaiDate } from './format.js'
 import Modal, { tbl as s } from './Modal.jsx'
 
 const AMBER = '#b45309'
 const GREEN = '#2e7d32'
+const BLUE = '#2a5f9e'
 // SQL column aliases → table headers
 const HEAD = { lab: 'Lab', order_date: 'สั่งล่าสุด', order_time: 'เวลา', days_ago: 'ผ่านมา (วัน)', result: 'ผล', name: 'ชื่อยา', strength: 'ความแรง', qty: 'จำนวน', units: 'หน่วย', howto: 'วิธีใช้', dx: 'ICD-10', basis: 'เข้าเกณฑ์', last_done: 'ทำล่าสุด', due: 'ต้องทำภายใน' }
 // patient info lines under the title (11px)
@@ -59,9 +60,10 @@ export default function Hits() {
   if (!data) return null
   const { patient: p, group, hits } = data
   const criteria = Object.fromEntries(group.rules.map((r) => [r.id, r.criteria]))
-  // PPFS hits are services to offer, not warnings
-  const pp = key === 'ppfs'
-  const [Icon, color] = pp ? [ShieldPlus, GREEN] : [TriangleAlert, AMBER]
+  // PPFS / PPB hits are work to do (services to offer / workload to record), not warnings
+  const pp = key === 'ppfs' || key === 'ppb'
+  const [Icon, color] = { ppfs: [ShieldPlus, GREEN], ppb: [ClipboardList, BLUE] }[key] ?? [TriangleAlert, AMBER]
+  const empty = { ppfs: 'ไม่มีบริการ PPFS ที่ให้ได้วันนี้', ppb: 'บันทึกผลงาน PPB ครบแล้วในปีงบนี้' }[key] ?? 'ไม่เข้าข่ายกฎที่ตั้งเตือนไว้'
   const rlu = key === 'rlu'
 
   return (
@@ -86,7 +88,7 @@ export default function Hits() {
       }
     >
       <p style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>{rlu ? 'LAB ไม่ควรสั่งใน Visit นี้ ตามเกณฑ์ RLU' : group.title}</p>
-      {hits.length === 0 && <p style={s.note}>{pp ? 'ไม่มีบริการ PPFS ที่ให้ได้วันนี้' : 'ไม่เข้าข่ายกฎที่ตั้งเตือนไว้'}</p>}
+      {hits.length === 0 && <p style={s.note}>{empty}</p>}
       {rlu && hits.length > 0 && <RluTable hits={hits} />}
       {!rlu && hits.map((h, n) => {
         const cols = Object.keys(h.rows[0])

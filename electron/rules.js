@@ -16,9 +16,10 @@ export function rulesOff() {
     return []
   }
 }
+// id: one rule id or an array of them (the header bell switches a whole group)
 export function setRuleOn(id, on) {
   const off = new Set(rulesOff())
-  on ? off.delete(id) : off.add(id)
+  for (const i of [id].flat()) on ? off.delete(i) : off.add(i)
   fs.writeFileSync(offFile(), JSON.stringify([...off]))
 }
 
@@ -297,13 +298,14 @@ const pp = (basis, last, since, due, ...where) => `
 SELECT ${basis} AS basis, COALESCE(${last('')}, 'ไม่เคย') AS last_done,
        ${due ? `DATE_FORMAT(${due}, '%Y-%m-%d')` : "'ไม่จำกัด'"} AS due
   FROM patient p
- WHERE p.hn = :hn
-   AND ${last(since)} IS NULL${where.map((w) => `
-   AND ${w}`).join('')}`
+ WHERE p.hn = :hn${where.map((w) => `
+   AND ${w}`).join('')}
+   AND ${last(since)} IS NULL` // target group first: the "done" lookups are the costly part
 const AGE = 'TIMESTAMPDIFF(YEAR, p.birthday, CURDATE())'
 const MONTHS = 'TIMESTAMPDIFF(MONTH, p.birthday, CURDATE())'
 const ageText = `CONCAT(${AGE}, ' ปี')`
 const FY_END = "CAST(CONCAT(YEAR(CURDATE()) + (MONTH(CURDATE()) >= 10), '-09-30') AS DATE)"
+const FY_EVE = `${FY_END} - INTERVAL 1 YEAR` // 30 Sep before this fiscal year: after() counts dates > it
 // last day the patient is still `n` years / months old
 const ageEnd = (n) => `p.birthday + INTERVAL ${n + 1} YEAR - INTERVAL 1 DAY`
 const monthsEnd = (n) => `p.birthday + INTERVAL ${n + 1} MONTH - INTERVAL 1 DAY`
@@ -320,8 +322,104 @@ const TB_RISK = [
   [dx('^(B2[0-4]|Z21)'), 'HIV'],
 ]
 
-// PPFS items of สปสช. ปีงบ 2569 (PPFS69) that HOSxP data can decide. Left out: ANC/postpartum, pregnancy test,
-// contraception, fluoride varnish, oral-cancer biopsy, mammogram (family history), glasses, TB contacts.
+// Pregnancy items, from the ANC register: the patient's person_anc record still open today (registered, not
+// yet delivered, not closed). An ANC lab counts when it is in person_anc_lab for this pregnancy or was ordered
+// as a lab since registering.
+const OPEN = "NOT (COALESCE(a.discharge, 'N') = 'Y' AND COALESCE(a.discharge_date, '1000-01-01') <= CURDATE())"
+const ancOf = (when) => `(SELECT a.person_anc_id FROM person_anc a JOIN person pe ON pe.person_id = a.person_id
+         WHERE pe.patient_hn = :hn AND ${when} AND ${OPEN} ORDER BY a.person_anc_id DESC LIMIT 1)`
+// registered within 10 months: also drops stale records and ones keyed with Buddhist-era dates (edc 2547-…)
+const ANC_ID = ancOf(`a.anc_register_date BETWEEN CURDATE() - INTERVAL 10 MONTH AND CURDATE()
+           AND COALESCE(a.labor_date, a.edc + INTERVAL 14 DAY, a.lmp + INTERVAL 294 DAY, a.anc_register_date + INTERVAL 280 DAY) > CURDATE()`)
+const PNC_ID = ancOf('a.labor_date BETWEEN CURDATE() - INTERVAL 42 DAY AND CURDATE()') // delivered ≤ 42 days ago
+const ancCol = (id, expr) => `(SELECT ${expr} FROM person_anc a WHERE a.person_anc_id = ${id})`
+const GA_WEEKS = 'FLOOR(DATEDIFF(CURDATE(), COALESCE(a.lmp, a.edc - INTERVAL 280 DAY)) / 7)'
+const GA = `COALESCE(${ancCol(ANC_ID, `IF(${GA_WEEKS} BETWEEN 0 AND 45, ${GA_WEEKS}, NULL)`)}, '?')` // '?' = no sane lmp/edc
+const EDC = ancCol(ANC_ID, 'IF(a.edc < CURDATE() + INTERVAL 10 MONTH, a.edc, NULL)')
+const REG = ancCol(ANC_ID, 'a.anc_register_date')
+const ancLabSql = (ids) => `FROM person_anc_service s JOIN person_anc_lab l ON l.person_anc_service_id = s.person_anc_service_id
+         WHERE s.person_anc_id = ${ANC_ID} AND l.anc_lab_id IN (${ids}) AND s.anc_service_date <= CURDATE()`
+const ancHas = ({ anc, labs = [] }) => `(EXISTS (SELECT 1 ${ancLabSql(anc)})${labs.length ? ` OR ${labLast(labs)(`${REG} - INTERVAL 1 DAY`)} IS NOT NULL` : ''})`
+const missing = (tests) => `CONCAT_WS(', ', ${tests.map((t) => `IF(${ancHas(t)}, NULL, '${t.label}')`).join(', ')})`
+// A set of ANC labs paid once it is complete. Shown: what is still missing and the latest of the set recorded so
+// far (pp's last('')); counted done (last(since), since non-empty) only when nothing is missing.
+const ancSet = (tests, due, ...where) =>
+  pp(
+    `CONCAT('GA ', ${GA}, ' สัปดาห์ · ยังขาด ', ${missing(tests)})`,
+    (since) => (since ? `IF(${missing(tests)} = '', CURDATE(), NULL)` : `(SELECT MAX(s.anc_service_date) ${ancLabSql(tests.flatMap((t) => t.anc))})`),
+    'set',
+    due,
+    `${ANC_ID} IS NOT NULL`,
+    ...where,
+  )
+// anc_lab ids: 1 VDRL1, 2 VDRL2, 3 HIV1, 4 HIV2, 6 HCT1, 8 DCIP, 9 blood group, 10 HBsAg1, 12 DCIP สามี, 13 MCV, 14 MCV สามี
+const LAB1 = [
+  { label: 'VDRL', anc: [1], labs: ['VDRL'] },
+  { label: 'HIV', anc: [3] },
+  { label: 'HBsAg', anc: [10], labs: ['HBsAg(ANC1)', 'HBsAg'] },
+  { label: 'CBC/DCIP', anc: [6, 8, 13], labs: ['DCIP', 'Hct'] },
+  { label: 'Blood group', anc: [9], labs: ['ABO', 'Blood group'] },
+]
+const LAB2 = [
+  { label: 'VDRL', anc: [2], labs: ['VDRL (ANC2)'] },
+  { label: 'HIV', anc: [4] },
+]
+const HUSBAND = [{ label: 'DCIP/MCV สามี', anc: [12, 14], labs: ['DCIP สามี'] }]
+// postpartum visit due in the window today falls in: 1 = day 0–7, 2 = day 8–15, 3 = day 16–42
+const PNC_DAYS = 'DATEDIFF(CURDATE(), a.labor_date)'
+const PNC_NO = `CASE WHEN ${PNC_DAYS} <= 7 THEN 1 WHEN ${PNC_DAYS} <= 15 THEN 2 ELSE 3 END`
+const PNC_DONE = `ELT(${PNC_NO}, a.post_labor_service1_date, a.post_labor_service2_date, a.post_labor_service3_date)`
+const ANC = [
+  {
+    id: 'ppAncLab1',
+    name: 'ฝากครรภ์: Lab ชุดแรก',
+    criteria: 'หญิงตั้งครรภ์ในทะเบียน ANC · VDRL, HIV, HBsAg, CBC/DCIP, Blood group ครบทุกรายการ · 600 บาท/การตั้งครรภ์',
+    sql: ancSet(LAB1, EDC),
+  },
+  {
+    id: 'ppAncLab2',
+    name: 'ฝากครรภ์: Lab ชุดที่สอง (ใกล้คลอด)',
+    criteria: 'หญิงตั้งครรภ์ GA ≥ 28 สัปดาห์ · VDRL และ HIV ครั้งที่ 2 · 190 บาท/การตั้งครรภ์',
+    sql: ancSet(LAB2, EDC, `${GA} >= 28`),
+  },
+  {
+    id: 'ppAncHusband',
+    name: 'คัดกรองธาลัสซีเมียสามี',
+    criteria: 'ภรรยาอยู่ในทะเบียน ANC ยังไม่มีผล DCIP/MCV ของสามี · 120 บาท/การตั้งครรภ์',
+    sql: ancSet(HUSBAND, EDC),
+  },
+  {
+    id: 'ppAncDental',
+    name: 'ฝากครรภ์: ตรวจช่องปาก-ขัดฟัน',
+    criteria: 'หญิงตั้งครรภ์ในทะเบียน ANC ยังไม่ได้ตรวจช่องปาก (ทะเบียน ANC หรือทันตกรรมหลังฝากครรภ์) · 500 บาท/การตั้งครรภ์',
+    sql: pp(
+      `CONCAT('GA ', ${GA}, ' สัปดาห์')`,
+      () =>
+        `COALESCE(${ancCol(ANC_ID, 'IF(a.dental_tx_date <= CURDATE(), a.dental_tx_date, NULL)')}, (SELECT MAX(d.vstdate) FROM dtmain d
+         WHERE d.hn = :hn AND d.vstdate BETWEEN ${REG} AND CURDATE()))`,
+      '',
+      EDC,
+      `${ANC_ID} IS NOT NULL`,
+    ),
+  },
+  {
+    id: 'ppPnc',
+    name: 'ตรวจหลังคลอด',
+    criteria: 'คลอดไม่เกิน 42 วัน · ครั้งที่ 1 (0–7 วัน), 2 (8–15 วัน), 3 (16–42 วัน) · 150 บาท/ครั้ง',
+    sql: pp(
+      ancCol(PNC_ID, `CONCAT('หลังคลอด ', ${PNC_DAYS}, ' วัน · ครั้งที่ ', ${PNC_NO})`),
+      () => ancCol(PNC_ID, `IF(${PNC_DONE} <= CURDATE(), ${PNC_DONE}, NULL)`),
+      '',
+      ancCol(PNC_ID, `a.labor_date + INTERVAL ELT(${PNC_NO}, 7, 15, 42) DAY`),
+      `${PNC_ID} IS NOT NULL`,
+    ),
+  },
+]
+
+// PPFS items of สปสช. ปีงบ 2570 (docs/PP fee schedule ปี 2570.pdf) that HOSxP data can decide. Left out: pregnancy
+// test, contraception, abortion, gender-affirming hormones (on request); ultrasound / Down screening / thalassemia
+// confirm (not recorded here); newborn TSH/TMS (done at the birth hospital, never ordered here); osteoporosis DXA
+// (no BMD item); oral-cancer biopsy, BRCA, mammogram (family history), glasses, OV urine test, LTBI, adult fluoride.
 const PPFS = [
   {
     id: 'ppFit',
@@ -374,8 +472,8 @@ const PPFS = [
   {
     id: 'ppAnemiaTeen',
     name: 'Hb/Hct คัดกรองโลหิตจาง หญิง 13–24 ปี',
-    criteria: 'หญิง 13–24 ปี ไม่ตั้งครรภ์ ปีละครั้ง · 65 บาท',
-    sql: pp(ageText, HB, ago(365), yearly(ageEnd(24)), FEMALE, `${AGE} BETWEEN 13 AND 24`, NOT_PREG),
+    criteria: 'หญิง 13–24 ปี ไม่ตั้งครรภ์ ครั้งเดียวในช่วงอายุ · 65 บาท',
+    sql: pp(ageText, HB, 'p.birthday + INTERVAL 13 YEAR', ageEnd(24), FEMALE, `${AGE} BETWEEN 13 AND 24`, NOT_PREG),
   },
   {
     id: 'ppIronFolic',
@@ -398,8 +496,48 @@ const PPFS = [
   {
     id: 'ppIronInfant',
     name: 'ยาน้ำเสริมธาตุเหล็ก เด็ก 6–12 เดือน',
-    criteria: 'อายุ 6–12 เดือน ปีละครั้ง · 50 บาท',
-    sql: pp(`CONCAT(${MONTHS}, ' เดือน')`, drugLast('FERR|Iron Syrup'), ago(365), yearly(monthsEnd(12)), `${MONTHS} BETWEEN 6 AND 12`),
+    criteria: 'อายุ 6–12 เดือน ปีงบละครั้ง · 50 บาท',
+    sql: pp(`CONCAT(${MONTHS}, ' เดือน')`, drugLast('FERR|Iron Syrup'), FY_EVE, yearly(monthsEnd(12)), `${MONTHS} BETWEEN 6 AND 12`),
+  },
+  ...ANC,
+]
+
+// PPB: the 5 workload items of บริการพื้นฐาน (ข้อ 82.2.2, 35% paid on counted people in a later round).
+// Same row shape as PPFS; "done" = recorded in this fiscal year (since 1 Oct), due = end of the fiscal year.
+const dentalLast = (codes) => (since) => `(SELECT MAX(d.vstdate) FROM dtmain d
+         WHERE d.hn = :hn AND d.tmcode IN (${codes.map((c) => `'${c}'`).join(', ')})${after('d.vstdate', since)})`
+const growthLast = (since) => `(SELECT MAX(s.vstdate) FROM opdscreen s
+         WHERE s.hn = :hn AND s.bw > 0 AND s.height > 0${after('s.vstdate', since)})`
+const PPB = [
+  {
+    id: 'pbDev',
+    name: 'ตรวจพัฒนาการเด็ก (DSPM)',
+    criteria: 'เด็ก 0–5 ปี ปีงบละครั้ง · รหัส PP 1B260–1B262',
+    sql: pp(`CONCAT(${MONTHS}, ' เดือน')`, ppLast('^1B26[0-2]$'), FY_EVE, yearly(ageEnd(5)), `${AGE} BETWEEN 0 AND 5`),
+  },
+  {
+    id: 'pbGrowth',
+    name: 'ชั่งน้ำหนัก-วัดส่วนสูง',
+    criteria: 'เด็ก 6–12 ปี ปีงบละครั้ง · บันทึกน้ำหนักและส่วนสูงในหน้าซักประวัติ',
+    sql: pp(ageText, growthLast, FY_EVE, yearly(ageEnd(12)), `${AGE} BETWEEN 6 AND 12`),
+  },
+  {
+    id: 'pbFluoride',
+    name: 'เคลือบฟลูออไรด์',
+    criteria: 'เด็ก 4–12 ปี ปีงบละครั้ง · ทันตกรรม หัตถการ 013',
+    sql: pp(ageText, dentalLast(['013']), FY_EVE, yearly(ageEnd(12)), `${AGE} BETWEEN 4 AND 12`),
+  },
+  {
+    id: 'pbSealant',
+    name: 'เคลือบหลุมร่องฟันแท้',
+    criteria: 'เด็ก 6–12 ปี ปีงบละครั้ง · ทันตกรรม หัตถการ 054',
+    sql: pp(ageText, dentalLast(['054']), FY_EVE, yearly(ageEnd(12)), `${AGE} BETWEEN 6 AND 12`),
+  },
+  {
+    id: 'pbDepress',
+    name: 'คัดกรองซึมเศร้าผู้สูงอายุ (2Q/9Q)',
+    criteria: 'อายุ 60 ปีขึ้นไป ปีงบละครั้ง · รหัส PP 1B0280–1B0285',
+    sql: pp(ageText, ppLast('^1B028[0-5]$'), FY_EVE, FY_END, `${AGE} >= 60`),
   },
 ]
 
@@ -415,6 +553,10 @@ export const GROUPS = {
   ppfs: {
     title: 'PPFS · บริการสร้างเสริมสุขภาพที่ให้ได้วันนี้',
     rules: PPFS,
+  },
+  ppb: {
+    title: 'PPB · ผลงานบริการพื้นฐานที่ยังไม่ได้บันทึกปีงบนี้',
+    rules: PPB,
   },
 }
 

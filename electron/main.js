@@ -4,7 +4,7 @@ import path from 'node:path'
 import { dockTop, undock, setRect, barScreen, setBarDisplay, leftButtonDown } from './appbar.js'
 import { loadDbConfig, saveDbConfig, testDb, getPatient } from './db.js'
 import { GROUPS, checkRules, checkPendingDrug, rulesOff, setRuleOn } from './rules.js'
-import { readHn, readDrugBox, watchClicks } from './hosxp.js'
+import { readHn, readDrugBox, watchClicks, controlInfo } from './hosxp.js'
 import updater from 'electron-updater' // CommonJS package: named ESM imports aren't available
 const { autoUpdater } = updater
 
@@ -232,7 +232,7 @@ app.whenReady().then(() => {
   })
   startAutoUpdate((v) => win.webContents.send('update', (updateVersion = v)))
   ipcMain.on('install-update', installUpdate)
-  const unhookClicks = watchClicks((click) => {
+  const clicks = watchClicks((click) => {
     recheckSoon()
     // Ticking a lab checkbox, or picking a lab in a combobox: warn if an RLU rule already flagged that lab
     // for this patient. checked === null (state unreadable) still warns: a needless warning beats a missed one.
@@ -245,12 +245,32 @@ app.whenReady().then(() => {
       return rows.length ? [{ group: 'rlu', rule: h.name, rows }] : []
     })
     if (found.length) openWarning(found)
-  })
+  }, onSpy)
   win.on('close', () => {
     clearInterval(hnTimer)
     clearTimeout(recheckTimer)
-    unhookClicks()
+    clicks.stop()
   })
+
+  // Spy (crosshair button): the next click is swallowed and the control under it shown.
+  // A click on the bar itself cancels.
+  let spying = false
+  const setSpying = (on) => {
+    spying = on
+    clicks.spy(on)
+    win.webContents.send('spying', on)
+  }
+  ipcMain.on('spy', () => setSpying(!spying))
+  let spyWin
+  function onSpy(pt) {
+    setSpying(false)
+    const p = screen.screenToDipPoint(pt), b = win.getBounds()
+    if (p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height) return
+    spyWin?.destroy()
+    spyWin = popup({ width: 560, height: 300 })
+    spyWin.on('closed', () => (spyWin = null))
+    load(spyWin, `spy?${new URLSearchParams({ info: JSON.stringify(controlInfo(pt)) })}`)
+  }
   load(win)
 
   // Every modal: no title bar, the page draws its own close button (src/Close.jsx)
@@ -293,11 +313,17 @@ app.whenReady().then(() => {
   ipcMain.on('open-rules', (_e, group) => openRules(group))
   ipcMain.on('open-hits', (_e, group) => openRules(group, 'hits'))
   // ตั้งเตือน menu: native, since the 30px bar can't hold a dropdown. x, y = under the button.
-  // PPFS (services to offer) sits apart from the lab/drug warnings. Icons: the badges' lucide icons as PNG
-  // (electron/menu/, @2x picked up automatically), since native menus can't draw SVG.
+  // PPFS / PPB (work that earns money) sit apart from the lab/drug warnings. Icons: the badges' lucide icons as
+  // PNG (electron/menu/, @2x picked up automatically), since native menus can't draw SVG.
   const item = (g, label) => ({ label, icon: path.join(import.meta.dirname, 'menu', `${g}.png`), click: () => openRules(g) })
   ipcMain.on('alert-menu', (_e, x, y) =>
-    Menu.buildFromTemplate([item('rlu', 'RLU · Lab'), item('rdu', 'RDU · ยา'), { type: 'separator' }, item('ppfs', 'PPFS · บริการ PP')]).popup({ window: win, x, y }),
+    Menu.buildFromTemplate([
+      item('rlu', 'RLU · Lab'),
+      item('rdu', 'RDU · ยา'),
+      { type: 'separator' },
+      item('ppfs', 'PPFS · บริการ PP'),
+      item('ppb', 'PPB · ผลงานพื้นฐาน'),
+    ]).popup({ window: win, x, y }),
   )
   ipcMain.handle('get-alerts', (_e, group) => {
     const { hn, name, sex, age, typeArea, pttype, chronic, vstdate, vsttime } = patient

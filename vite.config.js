@@ -1,7 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { spawn } from 'node:child_process'
+import fs from 'node:fs'
 import electron from 'electron'
+
+const { version } = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
 
 // Launch Electron once the dev server is listening; quit Vite when the window closes.
 const electronDev = {
@@ -19,4 +22,5 @@ const electronDev = {
 export default defineConfig({
   base: './',
   plugins: [react(), electronDev],
+  define: { __APP_VERSION__: JSON.stringify(version) },
 })

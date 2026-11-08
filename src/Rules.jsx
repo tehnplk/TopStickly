@@ -29,13 +29,13 @@ function SqlBlock({ sql }) {
 }
 
 // เตือน/ไม่เตือน toggle button: the bell icon is the label
-function Toggle({ on, onChange }) {
+function Toggle({ on, onChange, title = on ? 'เตือน (กดเพื่อปิด)' : 'ไม่เตือน (กดเพื่อเปิด)' }) {
   const Icon = on ? Bell : BellOff
   return (
     <button
       aria-pressed={on}
       aria-label={on ? 'เตือน' : 'ไม่เตือน'}
-      title={on ? 'เตือน (กดเพื่อปิด)' : 'ไม่เตือน (กดเพื่อเปิด)'}
+      title={title}
       onClick={() => onChange(!on)}
       style={{ width: 26, height: 20, margin: '0 auto', padding: 0, borderRadius: 4, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${on ? AMBER : '#ccc'}`, background: on ? AMBER : '#fff', color: on ? '#fff' : '#999' }}
     >
@@ -89,11 +89,16 @@ export default function Rules() {
             <thead>
               <tr>
                 <th style={{ ...s.th, width: 36, textAlign: 'center' }}>ลำดับ</th>
-                <th style={{ ...s.th, width: 220 }}>{key === 'ppfs' ? 'บริการ' : 'เรื่องที่เตือน'}</th>
+                <th style={{ ...s.th, width: 220 }}>{key === 'ppfs' || key === 'ppb' ? 'บริการ' : 'เรื่องที่เตือน'}</th>
                 <th style={s.th}>เงื่อนไข</th>
                 <th style={{ ...s.th, width: 30, textAlign: 'center' }}>SQL</th>
-                <th style={{ ...s.th, width: 38, textAlign: 'center' }} title="เตือน/ไม่เตือน">
-                  <Bell size={13} style={{ verticalAlign: 'middle' }} />
+                {/* header bell: any rule on → switch all off; all off → switch all on */}
+                <th style={{ ...s.th, width: 38, textAlign: 'center' }}>
+                  <Toggle
+                    on={onCount > 0}
+                    onChange={(v) => toggle(group.rules.map((r) => r.id), v)}
+                    title={onCount > 0 ? 'ปิดเตือนทุกกฎ (Off All)' : 'เปิดเตือนทุกกฎ (On All)'}
+                  />
                 </th>
               </tr>
             </thead>

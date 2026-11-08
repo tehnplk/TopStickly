@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bell, ChevronUp, Download, FlaskConical, Pill, Settings, ShieldPlus } from 'lucide-react'
+import { Bell, ChevronUp, ClipboardList, Crosshair, Download, FlaskConical, Pill, Settings, ShieldPlus } from 'lucide-react'
 import MonkIcon from './MonkIcon.jsx'
 
 // userSelect none: the bar is a control strip (and dragged around), never selectable text. Modals still are.
@@ -12,20 +12,24 @@ const groupBadge = { ...badge, display: 'flex', alignItems: 'center', gap: 4, fo
 const groupOff = { opacity: 0.45 }
 const groupHit = { background: '#b45309', color: '#fff', fontWeight: 700 }
 const ppHit = { background: '#2e7d32', color: '#fff', fontWeight: 700 }
+const ppbHit = { background: '#2a5f9e', color: '#fff', fontWeight: 700 }
 const divider = { width: 1, height: 16, background: 'rgba(255,255,255,0.25)' }
 const none = { hits: 0, on: 0 }
 const DRAG_PX = 4
-const labelBtn = { width: 'auto', padding: '0 10px', gap: 5, font: 'inherit' } // bar-btn with icon + text
+
+const appName = { marginLeft: 12, color: '#e0a54a', fontSize: 11, whiteSpace: 'nowrap' }
 
 export default function App() {
   const [collapsed, setCollapsed] = useState(false)
   const [patient, setPatient] = useState({ hn: '' })
   const { hn, name, ncd } = patient
   useEffect(() => window.bar.onPatient(setPatient), [])
-  const [count, setCount] = useState({ rlu: none, rdu: none, ppfs: none }) // group → { hits, on }
+  const [count, setCount] = useState({ rlu: none, rdu: none, ppfs: none, ppb: none }) // group → { hits, on }
   useEffect(() => window.bar.onAlerts(setCount), [])
   const [update, setUpdate] = useState('') // version downloaded and ready to install
   useEffect(() => window.bar.onUpdate(setUpdate), [])
+  const [spying, setSpying] = useState(false) // Spy armed: the next click is caught
+  useEffect(() => window.bar.onSpying(setSpying), [])
   const drag = useRef(null) // { x, y, on } while the button is held
 
   const toggle = () => {
@@ -71,6 +75,8 @@ export default function App() {
       <span style={{ display: 'flex' }}>
         <MonkIcon size={24} />
       </span>
+      {/* waiting for an HN: the app name and version */}
+      {!hn && <span style={appName}>สติ-สตางค์ {__APP_VERSION__}</span>}
       {hn && (
         <span style={{ marginLeft: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
           <span>
@@ -103,23 +109,39 @@ export default function App() {
           >
             <ShieldPlus size={14} /> PPFS {count.ppfs.hits}
           </button>
+          {/* PPB = workload not yet recorded this fiscal year (counts toward the 35% share), blue */}
+          <button
+            style={{ ...btn, ...groupBadge, ...(count.ppb.hits ? ppbHit : groupOff) }}
+            onClick={() => window.bar.openHits('ppb')}
+            title={`PPB: ผลงานที่ยังไม่ได้บันทึกปีงบนี้ ${count.ppb.hits} รายการ จากที่ตั้งไว้ ${count.ppb.on} รายการ (คลิกเพื่อดู)`}
+          >
+            <ClipboardList size={14} /> PPB {count.ppb.hits}
+          </button>
         </span>
       )}
       {/* Windows order: app actions first, window control (minimize) at the far right */}
       <span style={{ marginLeft: 'auto' }} />
+      {spying && <span style={{ ...appName, marginRight: 8 }}>Spy: คลิกที่ control ใน HOSxP · คลิกที่แถบนี้เพื่อยกเลิก</span>}
       <button
         className="bar-btn"
-        style={labelBtn}
+        style={spying ? { color: '#e0a54a' } : undefined}
+        onClick={() => window.bar.spy()}
+        title="Spy: ดูข้อมูล control ใน HOSxP"
+      >
+        <Crosshair size={15} />
+      </button>
+      <button
+        className="bar-btn"
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect()
           window.bar.alertMenu(Math.round(r.left), Math.round(r.bottom))
         }}
-        title="ตั้งเตือน RLU / RDU / PPFS"
+        title="ตั้งเตือน RLU / RDU / PPFS / PPB"
       >
-        <Bell size={15} /> ตั้งเตือน
+        <Bell size={15} />
       </button>
-      <button className="bar-btn" style={labelBtn} onClick={() => window.bar.openSettings()} title="ตั้งค่าการเชื่อมต่อ HOSxP">
-        <Settings size={15} /> เชื่อมต่อ
+      <button className="bar-btn" onClick={() => window.bar.openSettings()} title="ตั้งค่าการเชื่อมต่อ HOSxP">
+        <Settings size={15} />
       </button>
       <button className="bar-btn" onClick={toggle} title="ย่อ">
         <ChevronUp size={18} />

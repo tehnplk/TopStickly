@@ -206,16 +206,17 @@ export function isChecked(h) {
 
 // The form a control lives on: an MDI child of the main window, or a top-level dialog.
 // GetAncestor(GA_PARENT), not GetParent, which returns the *owner* for top-level dialogs.
-function formOf(h) {
+function formWindow(h) {
   const desktop = GetDesktopWindow()
   for (;;) {
     const p = GetAncestor(h, GA_PARENT)
-    if (!p || p === desktop || className(p) === 'MDIClient') {
-      const cls = className(h)
-      return cls === '#32770' ? 'MessageBox' : cls.replace(/^T/, '') // #32770 = standard Windows dialog class
-    }
+    if (!p || p === desktop || className(p) === 'MDIClient') return h
     h = p
   }
+}
+function formOf(h) {
+  const cls = className(formWindow(h))
+  return cls === '#32770' ? 'MessageBox' : cls.replace(/^T/, '') // #32770 = standard Windows dialog class
 }
 
 const COMBO_CLASS = /ComboBox/ // TcxComboBox, TcxDBComboBox, TcxLookupComboBox, TcxDBLookupComboBox, TComboBox
@@ -233,6 +234,78 @@ function controlAt(pt) {
   if (!h || !main || pidOf(h) !== pidOf(main)) return null
   if (INNER_CLASS.test(className(h))) h = GetAncestor(h, GA_PARENT)
   return { h, cls: className(h), caption: tidy(text(h)), form: formOf(h) }
+}
+
+// --- Spy (control inspector) ---
+const siblings = (parent) => children(parent, (c) => GetParent(c) === parent)
+
+// The label a control is known by: a sibling label on the same row to its left, else right above it.
+// (Plain Delphi TLabel is painted, not a window: only windowed labels like TcxLabel are seen.)
+function labelFor(h) {
+  const r = rect(h), mid = (r.top + r.bottom) / 2
+  const labels = siblings(GetParent(h))
+    .filter((l) => l !== h && IsWindowVisible(l) && /Label/.test(className(l)))
+    .map((l) => ({ l, r: rect(l) }))
+  const left = labels.filter((x) => x.r.right <= r.left + 2 && x.r.top <= mid && x.r.bottom >= mid).sort((a, b) => b.r.right - a.r.right)[0]
+  const above = labels
+    .filter((x) => x.r.bottom <= r.top + 2 && r.top - x.r.bottom <= 40 && x.r.left < r.right && x.r.right > r.left)
+    .sort((a, b) => b.r.bottom - a.r.bottom)[0]
+  const hit = left ?? above
+  return hit ? tidy(text(hit.l)) : ''
+}
+
+// Class chain from the form down to the control; [n] = index among same-class siblings when not unique.
+function classPath(h, form) {
+  const parts = []
+  for (let c = h; c && c !== form; c = GetAncestor(c, GA_PARENT)) {
+    const cls = className(c), same = siblings(GetParent(c)).filter((s) => className(s) === cls)
+    parts.unshift(same.length > 1 ? `${cls}[${same.indexOf(c)}]` : cls)
+  }
+  return [className(form), ...parts].join(' > ')
+}
+
+// Which click opened which window. Windows keeps no such link (only the owner form), so every click
+// compares HOSxP's top-level windows before and after it: a window that shows up within OPEN_WAIT_MS
+// is credited to that click. form hwnd → { form, cls, caption, path } of the control clicked.
+const GetWindow = u.func('intptr __stdcall GetWindow(intptr h, uint32 cmd)')
+const IsWindow = u.func('bool __stdcall IsWindow(intptr h)')
+const GW_OWNER = 4
+const OPEN_POLL_MS = 200, OPEN_WAIT_MS = 3000 // HOSxP often loads data before showing a dialog
+const openers = new Map()
+function creditNewWindows(before, click) {
+  const start = Date.now()
+  const timer = setInterval(() => {
+    const fresh = hosxpWindows().filter((h) => !before.has(h) && !POPUP_CLASS.test(className(h)))
+    for (const h of fresh) openers.set(h, click)
+    if (fresh.length || Date.now() - start > OPEN_WAIT_MS) {
+      clearInterval(timer)
+      for (const h of openers.keys()) if (!IsWindow(h)) openers.delete(h)
+    }
+  }, OPEN_POLL_MS)
+}
+
+// Everything knowable from outside about the window under a screen point (any app, hosxp tells if it's HOSxP).
+// The Delphi component name (btnSave...) lives only inside HOSxP's memory: not reachable from here.
+export function controlInfo(pt) {
+  let h = WindowFromPoint(pt)
+  if (!h) return null
+  if (INNER_CLASS.test(className(h))) h = GetAncestor(h, GA_PARENT)
+  const form = formWindow(h), r = rect(h), main = hosxpWindows()[0], cls = className(h)
+  const owner = GetWindow(form, GW_OWNER), by = openers.get(form)
+  return {
+    owner: owner ? `${className(owner)} ${(text(owner) ?? '').trim()}`.trim() : '',
+    openedBy: by ? `${by.caption || '(ไม่มีข้อความ)'} · ${by.cls} บน ${by.form}` : '',
+    openedByPath: by?.path ?? '',
+    hosxp: !!main && pidOf(h) === pidOf(main),
+    form: className(form),
+    formTitle: (text(form) ?? '').trim(),
+    cls,
+    label: /Button|CheckBox/.test(cls) ? '' : labelFor(h), // these carry their own caption; a neighbour's label isn't theirs
+    caption: (text(h) ?? '').trim(),
+    hwnd: '0x' + h.toString(16).toUpperCase(), // changes every HOSxP start; Delphi's control ID is the same number
+    rect: `${r.left},${r.top}  ${r.right - r.left}×${r.bottom - r.top}`,
+    path: classPath(h, form),
+  }
 }
 
 const REPAINT_MS = 150 // let HOSxP repaint/update the control after the click before reading it
@@ -288,16 +361,21 @@ function watchComboClose(combo, onSelect) {
 //   check  – a checkbox clicked; checked = true/false after the click, null if unreadable
 //   select – a combobox's dropdown closed with a new value (caption = the new value)
 // Keyboard-only interaction (without opening a list by mouse) is not seen.
-// Returns a function that removes the hook.
-export function watchClicks(onAction) {
-  let pressed = null, tid = 0
-  const worker = new Worker(new URL('./mousehook.js', import.meta.url))
+// Spy: spy(true) arms it; the next left click anywhere is swallowed and reported as onSpy({ x, y }).
+// Returns { stop, spy }: stop removes the hook.
+export function watchClicks(onAction, onSpy) {
+  let pressed = null, before = null, tid = 0
+  const armed = new Int32Array(new SharedArrayBuffer(4))
+  const worker = new Worker(new URL('./mousehook.js', import.meta.url), { workerData: { spy: armed.buffer } })
   worker.on('message', (m) => {
-    if (m.type === 'ready') {
+    if (m.type === 'spy') {
+      onSpy({ x: m.x, y: m.y })
+    } else if (m.type === 'ready') {
       tid = m.tid
       if (!m.ok) console.error('mouse hook: SetWindowsHookEx failed')
     } else if (m.type === 'down') {
       pressed = controlAt({ x: m.x, y: m.y }) // read the caption on press; the control's action runs on release
+      before = pressed && new Set(hosxpWindows())
     } else if (m.type === 'up') {
       const p = pressed
       pressed = null
@@ -305,6 +383,7 @@ export function watchClicks(onAction) {
       if (p && up?.h === p.h) {
         // released on the control it was pressed on: a click
         const base = { form: p.form, cls: p.cls, caption: p.caption, checked: null }
+        creditNewWindows(before, { ...base, path: classPath(p.h, formWindow(p.h)) })
         if (CHECK_CLASS.test(p.cls)) readSoon(() => isChecked(p.h), (checked) => onAction({ ...base, action: 'check', checked }))
         else onAction({ ...base, action: 'click' })
         if (COMBO_CLASS.test(p.cls)) watchComboClose(p, (value) => onAction({ ...base, action: 'select', caption: value }))
@@ -312,5 +391,8 @@ export function watchClicks(onAction) {
     }
   })
   worker.on('error', (e) => console.error('mouse hook worker', e))
-  return () => tid && PostThreadMessage(tid, WM_QUIT, 0, 0) // ends the worker's GetMessage loop
+  return {
+    stop: () => tid && PostThreadMessage(tid, WM_QUIT, 0, 0), // ends the worker's GetMessage loop
+    spy: (on) => Atomics.store(armed, 0, on ? 1 : 0),
+  }
 }
