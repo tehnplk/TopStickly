@@ -35,7 +35,7 @@ npm run dist    # สร้าง installer ใน release/
 
 เปิดแอปแล้วตั้งค่าการเชื่อมต่อ DB ที่ปุ่มเฟืองบนแถบ
 
-## 2. ต่อเติมระบบ → [HAND-OFF.md](HAND-OFF.md)
+## 2. การพัฒนา → [HAND-OFF.md](HAND-OFF.md)
 
 อ่านก่อนแก้โค้ด มีครบ:
 
