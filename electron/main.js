@@ -168,7 +168,7 @@ app.whenReady().then(() => {
   let alerts = noAlerts()
   let shown = new Set() // RDU rule ids already popped up for this patient
   const sendPatient = () => win.webContents.send('patient', patient)
-  // badge = rules this patient meets, per group (checkRules already skips rules switched off)
+  // alert button count = rules this patient meets, per group (checkRules already skips rules switched off)
   const sendAlerts = () => {
     const off = new Set(rulesOff())
     const count = Object.fromEntries(Object.entries(GROUPS).map(([g, { rules }]) => [g, { hits: alerts[g].length, on: rules.filter((r) => !off.has(r.id)).length }]))
@@ -302,7 +302,7 @@ app.whenReady().then(() => {
     w?.setContentSize(w.getContentSize()[0], Math.ceil(h))
   })
 
-  // page 'rules' = ตั้งเตือน (settings for everyone), 'hits' = what this patient meets (badge click)
+  // page 'rules' = ตั้งเตือน (settings for everyone), 'hits' = what this patient meets (alert button click)
   let rules
   function openRules(group, page = 'rules') {
     rules?.destroy() // one at a time, for the group just picked
@@ -313,7 +313,7 @@ app.whenReady().then(() => {
   ipcMain.on('open-rules', (_e, group) => openRules(group))
   ipcMain.on('open-hits', (_e, group) => openRules(group, 'hits'))
   // ตั้งเตือน menu: native, since the 30px bar can't hold a dropdown. x, y = under the button.
-  // PPFS / PPB (work that earns money) sit apart from the lab/drug warnings. Icons: the badges' lucide icons as
+  // PPFS / PPB (work that earns money) sit apart from the lab/drug warnings. Icons: the alert buttons' lucide icons as
   // PNG (electron/menu/, @2x picked up automatically), since native menus can't draw SVG.
   const item = (g, label) => ({ label, icon: path.join(import.meta.dirname, 'menu', `${g}.png`), click: () => openRules(g) })
   ipcMain.on('alert-menu', (_e, x, y) =>
@@ -329,7 +329,7 @@ app.whenReady().then(() => {
     const { hn, name, sex, age, typeArea, pttype, chronic, vstdate, vsttime } = patient
     return { patient: { hn, name, sex, age, typeArea, pttype, chronic, vstdate, vsttime }, group: GROUPS[group], hits: alerts[group], off: rulesOff() }
   })
-  // เตือน/ไม่เตือน switch in the rules modal: re-check the current patient so the badge follows at once
+  // เตือน/ไม่เตือน switch in the rules modal: re-check the current patient so the alert button follows at once
   ipcMain.handle('set-rule', async (_e, group, id, on) => {
     setRuleOn(id, on)
     const hn = patient.hn

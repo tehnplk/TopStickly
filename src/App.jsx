@@ -7,13 +7,14 @@ const bar = { height: '100vh', display: 'flex', alignItems: 'center', background
 const btn = { background: 'none', border: 0, color: 'inherit', font: 'inherit', cursor: 'pointer', padding: 0 }
 const badge = { padding: '2px 8px', borderRadius: 10, background: 'rgba(255,255,255,0.12)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }
 const ncdBadge = { ...badge, background: '#c62828', color: '#fff', fontWeight: 700, letterSpacing: 0.3, cursor: 'help' }
-// alert group badges: icon instead of the group name, then how many switched-on rules this patient meets
-const groupBadge = { ...badge, display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }
-const groupOff = { opacity: 0.45 }
-const groupHit = { background: '#b45309', color: '#fff', fontWeight: 700 }
+// alert buttons (ปุ่มแจ้งเตือน), one per group: icon (+ name), then how many switched-on rules this patient meets.
+// The NCD pill above is a real badge: a status, not clickable.
+const alertBtn = { ...badge, display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }
+const alertOff = { opacity: 0.45 }
+const alertHit = { background: '#b45309', color: '#fff', fontWeight: 700 }
 // Something to claim: flash 3 times when the count turns non-zero (on each new patient, as main resets the
 // count to 0 first). Same animation value on later rechecks = no replay.
-const blink = { animation: 'badge-blink 1.2s ease-in-out 3' }
+const blink = { animation: 'alert-blink 1.2s ease-in-out 3' }
 const ppHit = { background: '#2e7d32', color: '#fff', fontWeight: 700, ...blink }
 const ppbHit = { background: '#2a5f9e', color: '#fff', fontWeight: 700, ...blink }
 const divider = { width: 1, height: 16, background: 'rgba(255,255,255,0.25)' }
@@ -55,7 +56,7 @@ export default function App() {
     )
 
   // Hold and drag anywhere on the bar to move it to another display. It only counts as a drag once the
-  // pointer moves past DRAG_PX while held, so a plain click on a button or badge still clicks.
+  // pointer moves past DRAG_PX while held, so a plain click on a button still clicks.
   const endDrag = () => {
     if (drag.current?.on) window.bar.drag(false)
     drag.current = null
@@ -100,7 +101,7 @@ export default function App() {
             const { hits, on } = count[key]
             const tip = `${key.toUpperCase()}: เข้าข่าย ${hits} ข้อ จากกฎที่ตั้งเตือน ${on} ข้อ (คลิกเพื่อดู)`
             return (
-              <button key={key} style={{ ...btn, ...groupBadge, ...(hits ? groupHit : groupOff) }} onClick={() => window.bar.openHits(key)} title={tip}>
+              <button key={key} style={{ ...btn, ...alertBtn, ...(hits ? alertHit : alertOff) }} onClick={() => window.bar.openHits(key)} title={tip}>
                 <Icon size={14} /> {hits}
               </button>
             )
@@ -108,7 +109,7 @@ export default function App() {
           {/* PPFS = services to offer, not a warning: set apart, green */}
           <span style={divider} />
           <button
-            style={{ ...btn, ...groupBadge, ...(count.ppfs.hits ? ppHit : groupOff) }}
+            style={{ ...btn, ...alertBtn, ...(count.ppfs.hits ? ppHit : alertOff) }}
             onClick={() => window.bar.openHits('ppfs')}
             title={`PPFS: ให้บริการได้ ${count.ppfs.hits} รายการ จากที่ตั้งไว้ ${count.ppfs.on} รายการ (คลิกเพื่อดู)`}
           >
@@ -116,7 +117,7 @@ export default function App() {
           </button>
           {/* PPB = workload not yet recorded this fiscal year (counts toward the 35% share), blue */}
           <button
-            style={{ ...btn, ...groupBadge, ...(count.ppb.hits ? ppbHit : groupOff) }}
+            style={{ ...btn, ...alertBtn, ...(count.ppb.hits ? ppbHit : alertOff) }}
             onClick={() => window.bar.openHits('ppb')}
             title={`PPB: ผลงานที่ยังไม่ได้บันทึกปีงบนี้ ${count.ppb.hits} รายการ จากที่ตั้งไว้ ${count.ppb.on} รายการ (คลิกเพื่อดู)`}
           >

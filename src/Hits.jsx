@@ -101,7 +101,7 @@ function PpList({ hits, criteria, color }) {
   )
 }
 
-// Badge click: the rules (switched on) this patient meets in one group, with the rows behind each.
+// Alert button click: the rules (switched on) this patient meets in one group, with the rows behind each.
 export default function Hits() {
   const key = new URLSearchParams(location.hash.split('?')[1]).get('group')
   const [data, setData] = useState(null)

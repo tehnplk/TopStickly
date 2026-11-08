@@ -1,4 +1,4 @@
-// Alert rules shown as badges on the bar (one per group) and listed in the rules modal.
+// Alert rules shown as alert buttons on the bar (one per group) and listed in the rules modal.
 // Each rule's sql runs with :hn / :vn of the current patient; any row returned = the rule is hit,
 // and the rows are what the modal shows (column aliases → headers in src/Rules.jsx).
 // RLU rows must alias the lab name as `lab`: ticking that lab in HOSxP pops up the warning.
@@ -578,7 +578,7 @@ export async function checkRules(params, groups = Object.keys(GROUPS)) {
 
 // The drug in HOSxP's drug-name box ("<name> <strength> <units>", as HOSxP fills it after a pick) →
 // the RDU rules it would trip for this visit if ordered: [{ id, name, rows }], only rules whose rows
-// include that drug (a rule already hit by saved drugs alone is the badge's job).
+// include that drug (a rule already hit by saved drugs alone is the alert button's job).
 export async function checkPendingDrug({ hn, vn }, boxText) {
   const t = boxText.trim()
   if (!t || !vn) return []
