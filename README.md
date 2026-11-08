@@ -7,6 +7,8 @@
 - **PPFS** — บริการ PP Fee Schedule ที่คนไข้รับได้วันนี้ (โอกาสเคลม)
 - **PPB** — ผลงานบริการพื้นฐานที่ยังไม่บันทึกในปีงบนี้
 
+![กดปุ่มแจ้งเตือน PPFS: รายการบริการที่ให้ได้วันนี้ พร้อมอัตราเบิกและยอดรวม](screenshots/ppfs-modal.png)
+
 ติดตั้งสำหรับผู้ใช้: ดาวน์โหลด `TopStickly-Setup-<version>.exe` จาก [Releases](https://github.com/tehnplk/TopStickly/releases) แอปอัปเดตตัวเองจากหน้านั้น
 
 ## 1. STACK
